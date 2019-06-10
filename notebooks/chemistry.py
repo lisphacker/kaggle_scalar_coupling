@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+import io
+
+import numpy as np
+
 bond_distances = {
     ('C', 'C'): (1.2, 1.54),
     ('C', 'H'): (1.06, 1.12),
@@ -53,11 +58,7 @@ class Molecule:
     def __compute_bond(self, atom1, atom2):
         dist = self.__get_distance(atom1, atom2)
         pair = (atom1.symbol, atom2.symbol)
-        
-        if pair == ('O', 'C') or pair == ('C', 'O'):
-            print(atom1.symbol, atom2.symbol, dist)
-
-        
+              
         if pair in bond_distances:
             bond_dist_min, bond_dist_max = bond_distances[pair]
             if dist >= bond_dist_min and dist <= bond_dist_max:
@@ -83,3 +84,39 @@ class Molecule:
                 sio.write('  {}({}) - {}({})\n'.format(bond.atom1.symbol, bond.atom1.index, bond.atom2.symbol, bond.atom2.index))
         
         return sio.getvalue()
+
+def compute_path(molecule, atomidx0, atomidx1):
+    unvisited = set([atom.index for atom in molecule.atoms])
+    edges = set([(bond.atom1.index, bond.atom2.index) for bond in molecule.bonds] + [(bond.atom2.index, bond.atom1.index) for bond in molecule.bonds])
+    previous_node = {atom.index:None for atom in molecule.atoms}
+    n_atoms = len(unvisited)
+
+    dist = np.empty(n_atoms, dtype='float32')
+    dist[:] = np.inf
+    dist[atomidx0] = 0
+
+    while len(unvisited) > 0:
+        mx = np.inf
+        mxi = -1
+        for u in unvisited:
+            if dist[u] < mx:
+                mxi = u
+                mx = dist[u]
+
+        u = mxi
+        unvisited.remove(u)
+
+        for i, j in edges:
+            if i == u:                
+                new_dist = dist[u] + 1
+                if new_dist < dist[j]:
+                    dist[j] = new_dist
+                    previous_node[j] = i
+
+    node = atomidx1
+    path = [node]
+    while previous_node[node] is not None:
+        node = previous_node[node]
+        path.append(node)
+
+    return list(reversed(path))
