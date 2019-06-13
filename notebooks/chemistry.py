@@ -82,6 +82,7 @@ class Molecule:
             sio.write('Bonds:\n')
             for bond in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(bond.atom1.symbol, bond.atom1.index, bond.atom2.symbol, bond.atom2.index))
+        sio.write('\n')
         
         return sio.getvalue()
 
