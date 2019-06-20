@@ -2,15 +2,28 @@ from dataclasses import dataclass
 import io
 
 import numpy as np
+from pprint import pprint
 
+cc1_err = 0.09
+err = 0.04
+
+# bond_distances = {
+#     ('C', 'C'): (1.2, 1.54),
+#     ('C', 'F'): (1.34 - 0.04, 1.34 + 0.04),
+#     ('C', 'H'): (1.06, 1.12),
+#     ('C', 'N'): (1.15, 2.10),
+#     ('C', 'O'): (1.43, 2.15),
+#     ('N', 'H'): (0.99 - 0.04, 0.99 + 0.04),
+#     ('O', 'H'): (0.98 - 0.04, 0.98 + 0.04),
+# }
 bond_distances = {
-    ('C', 'C'): (1.2, 1.54),
-    ('C', 'H'): (1.06, 1.12),
-    ('C', 'O'): (1.43, 2.15),
-    ('C', 'N'): (1.47, 2.10),
-    ('C', 'F'): (1.34 - 0.04, 1.34 + 0.04),
-    ('O', 'H'): (0.98 - 0.04, 0.98 + 0.04),
-    ('C', 'O'): (1.43 - 0.04, 1.43 + 0.04)
+    ('C', 'C'): [(1.54 - cc1_err, 1.54 + cc1_err), (1.34 - err, 1.34 + err), (1.20 - err, 1.20 + err), (1.40 - err, 1.40 + err)],
+    ('C', 'F'): [(1.34 - err, 1.34 + err)],
+    ('C', 'H'): [(1.09 - err, 1.09 + err)],
+    ('C', 'N'): [(1.47 - err, 1.47 + err), (1.25 - err, 1.25 + err), (1.16 - err, 1.16 + err), (1.34 - err, 1.34 + err)],
+    ('C', 'O'): [(1.43 - err, 1.43 + err), (1.21 - err, 1.21 + err)],
+    ('N', 'H'): [(0.99 - err, 0.99 + err)],
+    ('O', 'H'): [(0.98 - err, 0.98 + err)],
 }
 
 class Atom:
@@ -58,11 +71,12 @@ class Molecule:
     def __compute_bond(self, atom1, atom2):
         dist = self.__get_distance(atom1, atom2)
         pair = (atom1.symbol, atom2.symbol)
-              
+
         if pair in bond_distances:
-            bond_dist_min, bond_dist_max = bond_distances[pair]
-            if dist >= bond_dist_min and dist <= bond_dist_max:
-                return Bond(atom1, atom2)
+            for bond_dist_min, bond_dist_max in bond_distances[pair]:
+                #print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max)
+                if dist >= bond_dist_min and dist <= bond_dist_max:
+                    return Bond(atom1, atom2)
             
         return None
 
@@ -89,6 +103,7 @@ class Molecule:
 def compute_path(molecule, atomidx0, atomidx1):
     unvisited = set([atom.index for atom in molecule.atoms])
     edges = set([(bond.atom1.index, bond.atom2.index) for bond in molecule.bonds] + [(bond.atom2.index, bond.atom1.index) for bond in molecule.bonds])
+    #pprint(edges)
     previous_node = {atom.index:None for atom in molecule.atoms}
     n_atoms = len(unvisited)
 
@@ -103,6 +118,9 @@ def compute_path(molecule, atomidx0, atomidx1):
             if dist[u] < mx:
                 mxi = u
                 mx = dist[u]
+
+        if mxi == -1:
+            break
 
         u = mxi
         unvisited.remove(u)
