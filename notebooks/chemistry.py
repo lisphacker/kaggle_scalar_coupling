@@ -16,10 +16,10 @@ import plotly.graph_objs as go
 import ipyvolume.pylab as p3
 
 
-cc1_err = 0.19
+cc1_err = 0.21
 cn1_err = 0.32
 co1_err = 0.11
-no1_err = 0.1
+no1_err = 0.12
 err = 0.05
 
 # bond_distances = {
@@ -114,12 +114,12 @@ class Molecule:
         dist = self.__get_distance(atom1, atom2)
         pair = (atom1.symbol, atom2.symbol)
 
-        #s = set([8, 4])
+        s = set([3, 2])
         if pair in bond_distances:
             for bond_dist_min, bond_dist_max in bond_distances[pair]:
                 #print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
-                #if atom1.index in s and atom2.index in s:
-                #    print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
+                if atom1.index in s and atom2.index in s:
+                    print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
 
                 if dist >= bond_dist_min and dist <= bond_dist_max:
                     return Bond(atom1, atom2)
