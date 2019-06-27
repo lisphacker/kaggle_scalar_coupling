@@ -15,7 +15,6 @@ import plotly.graph_objs as go
 
 import ipyvolume.pylab as p3
 
-
 cc1_err = 0.20 # 0.21
 ch1_err = 0.16
 cn1_err = 0.32
@@ -68,75 +67,69 @@ atom_size = {
     'N': 14
 }
 
-class Atom:
-    __slots__ = ['symbol', 'position', 'index']
-
-    def __init__(self, symbol, position, index=-1):
-        self.symbol = symbol
-        self.position = np.array(position)
-        self.index = index
-        
-    def __eq__(self, o):
-        return self.symbol == o.symbol and self.position == o.position
-    
-@dataclass
-class Bond:
-    __slots__ = ['atom1', 'atom2']
-
-    atom1: Atom
-    atom2: Atom
-        
-    def __eq__(self, o):
-        return self.atom1.index == o.atom1.index and self.atom2.index == o.atom2.index
-
 class Molecule:
-    __slots__ = ['name', 'atoms', 'bonds']
+    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds']
 
-    def __init__(self, name, atoms):
-        self.name = name
-        self.atoms = atoms
-        self.bonds = []
-        
-        for i, atom in enumerate(self.atoms):
-            atom.index = i
-            
+    def __init__(self, df):
+
+        self.__init(df)    
         self.__compute_bonds()
-        
+
+    def __init(self, df):
+        self.name = df.iloc[0, 0]
+
+        self.n_atoms = len(df)
+
+        self.positions = np.empty((self.n_atoms, 3), dtype='float32')
+        self.symbols = [None] * self.n_atoms
+
+        self.positions[:, 0] = df.x.array
+        self.positions[:, 1] = df.y.array
+        self.positions[:, 2] = df.z.array
+        self.symbols = [c for c in df.atom.array]
+
     def __compute_bonds(self):
-        for atom1 in self.atoms:
-            for atom2 in self.atoms:
-                if atom1.index >= atom2.index:
+        bonds = []
+        for i1 in range(self.n_atoms):
+            s1 = self.symbols[i1]
+            p1 = self.positions[i1, :]
+            for i2 in range(self.n_atoms):
+                if i1 >= i2:
+                    continue
+                s2 = self.symbols[i2]
+                p2 = self.positions[i2, :]
+                    
+                bond = self.__compute_bond(i1, i2, s1, s2, p1, p2)
+                if bond is None:
+                    bond = self.__compute_bond(i2, i1, s2, s1, p2, p1)
+                if bond is None:
                     continue
                     
-                bond = self.__compute_bond(atom1, atom2)
-                if bond is None:
-                    bond = self.__compute_bond(atom2, atom1)
-                if bond is None:
-                    continue
-                    
-                self.bonds.append(bond)
-                
-    def __compute_bond(self, atom1, atom2):
-        pair = (atom1.symbol, atom2.symbol)
+                bonds.append(bond)
+        self.bonds = bonds#np.array(bonds, dtype='int8')
+
+    def __compute_bond(self, i1, i2, s1, s2, p1, p2):
+        pair = (s1, s2)
 
         #s = set([2, 7])
         #if atom1.index in s and atom2.index in s:
         #    print(pair, pair in bond_distances)
         if pair in bond_distances:
-            dist = self.__get_distance(atom1, atom2)
-            for bond_dist_min, bond_dist_max in bond_distances[pair]:
+            dist = self.__get_distance(p1, p2)
+            bd_pair = bond_distances[pair]
+            for bond_dist_min, bond_dist_max in bd_pair:
                 #print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
                 #if atom1.index in s and atom2.index in s:
                 #    print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
                 #    pass
 
                 if dist >= bond_dist_min and dist <= bond_dist_max:
-                    return Bond(atom1, atom2)
+                    return (i1, i2)
             
         return None
 
-    def __get_distance(self, atom1, atom2):
-        diff = atom1.position - atom2.position
+    def __get_distance(self, p1, p2):
+        diff = p1 - p2
         return np.sqrt(np.dot(diff, diff))
     
     def __repr__(self):
@@ -144,56 +137,61 @@ class Molecule:
         sio.write('Name: {}\n'.format(self.name))
         
         sio.write('Atoms:\n')
-        for atom in self.atoms:
-            sio.write('  {} {}: {}\n'.format(atom.symbol, atom.index, atom.position))
-            
+        for i in range(self.n_atoms):
+            sio.write('  {} {}: {}\n'.format(self.symbols[i], i, self.positions[i, :]))
+                        
         if len(self.bonds) > 0:
             sio.write('Bonds:\n')
-            for bond in self.bonds:
-                sio.write('  {}({}) - {}({})\n'.format(bond.atom1.symbol, bond.atom1.index, bond.atom2.symbol, bond.atom2.index))
+            for i1, i2 in self.bonds:
+                sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
         sio.write('\n')
         
         return sio.getvalue()
 
-def compute_path(molecule, atomidx0, atomidx1):
-    unvisited = set([atom.index for atom in molecule.atoms])
-    edges = set([(bond.atom1.index, bond.atom2.index) for bond in molecule.bonds] + [(bond.atom2.index, bond.atom1.index) for bond in molecule.bonds])
-    #pprint(edges)
-    previous_node = {atom.index:None for atom in molecule.atoms}
-    n_atoms = len(unvisited)
+    def compute_path(self, i1, i2):
+        unvisited = set(range(self.n_atoms))
+        edges = self.bonds
+        previous_node = [None] * self.n_atoms
 
-    dist = np.empty(n_atoms, dtype='float32')
-    dist[:] = np.inf
-    dist[atomidx0] = 0
+        dist = np.empty(self.n_atoms, dtype='float32')
+        dist[:] = np.inf
+        dist[i1] = 0
 
-    while len(unvisited) > 0:
-        mx = np.inf
-        mxi = -1
-        for u in unvisited:
-            if dist[u] < mx:
-                mxi = u
-                mx = dist[u]
+        while len(unvisited) > 0:
+            mx = np.inf
+            mxi = -1
+            for u in unvisited:
+                if dist[u] < mx:
+                    mxi = u
+                    mx = dist[u]
 
-        if mxi == -1:
-            break
+            if mxi == -1:
+                break
 
-        u = mxi
-        unvisited.remove(u)
+            u = mxi
+            unvisited.remove(u)
 
-        for i, j in edges:
-            if i == u:                
-                new_dist = dist[u] + 1
-                if new_dist < dist[j]:
-                    dist[j] = new_dist
-                    previous_node[j] = i
+            for i, j in edges:
+                if j == u:
+                    s = j
+                    e = i
+                else:
+                    s = i
+                    e = j
+                    
+                if s == u:                
+                    new_dist = dist[s] + 1
+                    if new_dist < dist[e]:
+                        dist[e] = new_dist
+                        previous_node[e] = s
 
-    node = atomidx1
-    path = [node]
-    while previous_node[node] is not None:
-        node = previous_node[node]
-        path.append(node)
+        node = i2
+        path = [node]
+        while previous_node[node] is not None:
+            node = previous_node[node]
+            path.append(node)
 
-    return list(reversed(path))
+        return list(reversed(path))
 
 def make_ase_atoms(molecule):
     symbols = []
@@ -214,20 +212,20 @@ def plt_plot_molecule(molecule):
     fig = plt.figure(figsize=(10, 10))
     ax = fig.gca(projection='3d')
 
-    x = [atom.position[0] for atom in molecule.atoms]
-    y = [atom.position[1] for atom in molecule.atoms]
-    z = [atom.position[2] for atom in molecule.atoms]
-    c = [atom_color[atom.symbol] for atom in molecule.atoms]
-    s = [20 * atom_size[atom.symbol] for atom in molecule.atoms]
+    x = molecule.positions[:, 0]
+    y = molecule.positions[:, 1]
+    z = molecule.positions[:, 2]
+    c = [atom_color[symbol] for symbol in molecule.symbols]
+    s = [20 * atom_size[symbol] for symbol in molecule.symbols]
 
     ax.scatter(x, y, zs=z, c=c, s=s, edgecolor='black')
 
-    for atom in molecule.atoms:
-        ax.text(atom.position[0], atom.position[1], atom.position[2], '{} {}'.format(atom.symbol, atom.index))
+    for i in range(molecule.n_atoms):
+        ax.text(molecule.positions[i, 0], molecule.positions[i, 1], molecule.positions[i, 2], '{} {}'.format(molecule.symbols[i], i))
 
-    for bond in molecule.bonds:
-        a1 = bond.atom1.position
-        a2 = bond.atom2.position
+    for i1, i2 in molecule.bonds:
+        a1 = molecule.positions[i1, :]
+        a2 = molecule.positions[i2, :]
         ax.plot([a1[0], a2[0]], [a1[1], a2[1]], [a1[2], a2[2]], 'black')
 
     plt.show()
