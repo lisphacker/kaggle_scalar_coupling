@@ -16,13 +16,14 @@ import plotly.graph_objs as go
 import ipyvolume.pylab as p3
 
 
-cc1_err = 0.21
+cc1_err = 0.20 # 0.21
 ch1_err = 0.16
 cn1_err = 0.32
 co1_err = 0.11
-hn1_err = 0.08
-ho1_err = 0.06
-no1_err = 0.12
+hn1_err = 0.14
+ho1_err = 0.07
+nn2_err = 0.08
+no1_err = 0.17
 oo1_err = 0.13
 err = 0.05
 
@@ -42,9 +43,9 @@ bond_distances = {
     ('C', 'N'): [(1.47 - cn1_err, 1.47 + cn1_err), (1.25 - err, 1.25 + err), (1.16 - err, 1.16 + err), (1.34 - err, 1.34 + err), (1.32 - err, 1.32 + err)],
     ('C', 'O'): [(1.43 - co1_err, 1.43 + co1_err), (1.21 - err, 1.21 + err), (1.29 - err, 1.29 + err)],
     ('F', 'N'): [(1.36 - err, 1.36 + err)],
-    ('H', 'N'): [(0.99 - hn1_err, 0.99 + hn1_err)],
+    ('H', 'N'): [(1.01 - hn1_err, 1.01 + hn1_err)],
     ('H', 'O'): [(0.98 - ho1_err, 0.98 + ho1_err)],
-    ('N', 'N'): [(1.45 - err, 1.45 + err), (1.25 - err, 1.25 + err), (1.1 - err, 1.1 + err), (1.35 - err, 1.35 + err)],
+    ('N', 'N'): [(1.45 - err, 1.45 + err), (1.25 - nn2_err, 1.25 + nn2_err), (1.1 - err, 1.1 + err), (1.35 - err, 1.35 + err)],
     ('N', 'O'): [(1.4 - no1_err, 1.4 + no1_err), (1.21 - err, 1.21 + err), (1.24 - err, 1.24 + err)],
     ('O', 'O'): [(1.48 - oo1_err, 1.48 + oo1_err)]
 }
@@ -119,7 +120,7 @@ class Molecule:
         dist = self.__get_distance(atom1, atom2)
         pair = (atom1.symbol, atom2.symbol)
 
-        s = set([3, 13])
+        s = set([2, 7])
         #if atom1.index in s and atom2.index in s:
         #    print(pair, pair in bond_distances)
         if pair in bond_distances:
@@ -127,6 +128,7 @@ class Molecule:
                 #print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
                 if atom1.index in s and atom2.index in s:
                     print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
+                    pass
 
                 if dist >= bond_dist_min and dist <= bond_dist_max:
                     return Bond(atom1, atom2)
