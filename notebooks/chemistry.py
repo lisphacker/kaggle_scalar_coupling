@@ -4,6 +4,9 @@ import io
 import numpy as np
 from pprint import pprint
 
+import math
+
+from functools import reduce
 import ase
 import ase.visualize
 
@@ -145,45 +148,45 @@ class Molecule:
             for i1, i2 in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
         sio.write('\n')
-        
+
         return sio.getvalue()
 
     def compute_path(self, i1, i2):
         unvisited = set(range(self.n_atoms))
-        edges = self.bonds
+        unvisited_count = self.n_atoms
         previous_node = [None] * self.n_atoms
 
-        dist = np.empty(self.n_atoms, dtype='float32')
-        dist[:] = np.inf
+        edges = {}
+        for i in range(self.n_atoms):
+            edges[i] = []
+
+        for i, j in self.bonds:
+            edges[i].append(j)
+            edges[j].append(i)
+
+        dist = [math.inf] * self.n_atoms
         dist[i1] = 0
 
-        while len(unvisited) > 0:
-            mx = np.inf
-            mxi = -1
+        while unvisited_count > 0:
+            mn = math.inf
+            mni = -1
             for u in unvisited:
-                if dist[u] < mx:
-                    mxi = u
-                    mx = dist[u]
+                if dist[u] < mn:
+                    mni = u
+                    mn = dist[u]
 
-            if mxi == -1:
+            if mni == -1:
                 break
 
-            u = mxi
+            u = mni
             unvisited.remove(u)
+            unvisited_count -= 1
 
-            for i, j in edges:
-                if j == u:
-                    s = j
-                    e = i
-                else:
-                    s = i
-                    e = j
-                    
-                if s == u:                
-                    new_dist = dist[s] + 1
-                    if new_dist < dist[e]:
-                        dist[e] = new_dist
-                        previous_node[e] = s
+            for v in edges[u]:
+                new_dist = dist[u] + 1
+                if new_dist < dist[v]:
+                    dist[v] = new_dist
+                    previous_node[v] = u
 
         node = i2
         path = [node]
