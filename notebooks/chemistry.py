@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import io
 
+from collections import namedtuple
+
 import numpy as np
 from pprint import pprint
 
@@ -18,7 +20,10 @@ import plotly.graph_objs as go
 
 import ipyvolume.pylab as p3
 
-cc1_err = 0.20 # 0.21
+#cc1_err = 0.206
+cc1_err = 0.21
+#cc1_err = 0.203
+
 ch1_err = 0.16
 cn1_err = 0.32
 co1_err = 0.11
@@ -28,6 +33,9 @@ nn2_err = 0.08
 no1_err = 0.17
 oo1_err = 0.13
 err = 0.05
+
+BondDef = namedtuple('BondDef', ['min_dist', 'max_dist', 'valency', 'strength'])
+Bond = namedtuple('Bond', ['dist', 'valency', 'strength'])
 
 # bond_distances = {
 #     ('C', 'C'): (1.2, 1.54),
@@ -39,17 +47,40 @@ err = 0.05
 #     ('O', 'H'): (0.98 - 0.04, 0.98 + 0.04),
 # }
 bond_distances = {
-    ('C', 'C'): [(1.54 - cc1_err, 1.54 + cc1_err), (1.34 - err, 1.34 + err), (1.20 - err, 1.20 + err), (1.40 - err, 1.40 + err)],
-    ('C', 'F'): [(1.34 - err, 1.34 + err)],
-    ('C', 'H'): [(1.09 - ch1_err, 1.09 + ch1_err)],
-    ('C', 'N'): [(1.47 - cn1_err, 1.47 + cn1_err), (1.25 - err, 1.25 + err), (1.16 - err, 1.16 + err), (1.34 - err, 1.34 + err), (1.32 - err, 1.32 + err)],
-    ('C', 'O'): [(1.43 - co1_err, 1.43 + co1_err), (1.21 - err, 1.21 + err), (1.29 - err, 1.29 + err)],
-    ('F', 'N'): [(1.36 - err, 1.36 + err)],
-    ('H', 'N'): [(1.01 - hn1_err, 1.01 + hn1_err)],
-    ('H', 'O'): [(0.98 - ho1_err, 0.98 + ho1_err)],
-    ('N', 'N'): [(1.45 - err, 1.45 + err), (1.25 - nn2_err, 1.25 + nn2_err), (1.1 - err, 1.1 + err), (1.35 - err, 1.35 + err)],
-    ('N', 'O'): [(1.4 - no1_err, 1.4 + no1_err), (1.21 - err, 1.21 + err), (1.24 - err, 1.24 + err)],
-    ('O', 'O'): [(1.48 - oo1_err, 1.48 + oo1_err)]
+    ('C', 'C'): [
+        BondDef(1.54 - cc1_err, 1.54 + cc1_err, 1, 346), 
+        BondDef(1.34 - err, 1.34 + err, 2, 602), 
+        BondDef(1.20 - err, 1.20 + err, 3, 835), 
+        BondDef(1.40 - err, 1.40 + err, 1.5, 518)
+    ],
+    ('C', 'F'): [BondDef(1.34 - err, 1.34 + err, 1, 135)],
+    ('C', 'H'): [BondDef(1.09 - ch1_err, 1.09 + ch1_err, 1, 411)],
+    ('C', 'N'): [
+        BondDef(1.47 - cn1_err, 1.47 + cn1_err, 1, 305), 
+        BondDef(1.25 - err, 1.25 + err, 2, 615), 
+        BondDef(1.16 - err, 1.16 + err, 3, 887), 
+        BondDef(1.34 - err, 1.34 + err, 1.5, -1), 
+        BondDef(1.32 - err, 1.32 + err, 1.5, -1) # Check this
+    ],
+    ('C', 'O'): [
+        BondDef(1.43 - co1_err, 1.43 + co1_err, 1, 358), 
+        BondDef(1.21 - err, 1.21 + err, 2, 799), 
+        BondDef(1.29 - err, 1.29 + err, 1.5, -1) # Check this
+    ],
+    ('F', 'N'): [BondDef(1.36 - err, 1.36 + err, 1, 283)],
+    ('H', 'N'): [BondDef(1.01 - hn1_err, 1.01 + hn1_err, 1, 386)],
+    ('H', 'O'): [BondDef(0.98 - ho1_err, 0.98 + ho1_err, 1, 459)],
+    ('N', 'N'): [BondDef(1.45 - err, 1.45 + err, 1, 167), 
+        BondDef(1.25 - nn2_err, 1.25 + nn2_err, 2, 418), 
+        BondDef(1.1 - err, 1.1 + err, 3, 942), 
+        BondDef(1.35 - err, 1.35 + err, 1.5, -1)
+    ],
+    ('N', 'O'): [
+        BondDef(1.4 - no1_err, 1.4 + no1_err, 1, 201), 
+        BondDef(1.21 - err, 1.21 + err, 2, 607), 
+        BondDef(1.24 - err, 1.24 + err, 1.5, -1) # Check this
+    ],
+    ('O', 'O'): [BondDef(1.48 - oo1_err, 1.48 + oo1_err, 1, 142)]
 }
 
 atom_symbols = ['C', 'H', 'F', 'O', 'N']
@@ -70,15 +101,24 @@ atom_size = {
     'N': 14
 }
 
+valency = {    
+    'C': 4,
+    'H': 1,
+    'F': 1,
+    'O': 2,
+    'N': 3
+}
+
 class Molecule:
-    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds']
+    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds', 'test_atom_index_set']
 
-    def __init__(self, df):
+    def __init__(self, df, test_atom_index_set=None):
+        self.test_atom_index_set = test_atom_index_set
 
-        self.__init(df)    
+        self.__init(df, test_atom_index_set)    
         self.__compute_bonds()
 
-    def __init(self, df):
+    def __init(self, df, test_atom_index_set):
         self.name = df.iloc[0, 0]
 
         self.n_atoms = len(df)
@@ -93,6 +133,12 @@ class Molecule:
 
     def __compute_bonds(self):
         bonds = []
+
+        # bond_count = [0] * self.n_atoms
+        # bond_valency = np.zeros((self.n_atoms, self.n_atoms))
+        # bond_length = np.zeros((self.n_atoms, self.n_atoms))
+        # bond_energy = np.zeros((self.n_atoms, self.n_atoms))
+
         for i1 in range(self.n_atoms):
             s1 = self.symbols[i1]
             p1 = self.positions[i1, :]
@@ -107,27 +153,40 @@ class Molecule:
                     bond = self.__compute_bond(i2, i1, s2, s1, p2, p1)
                 if bond is None:
                     continue
-                    
-                bonds.append(bond)
+
+                # bond_count[i1] += bond.valency
+                # bond_count[i2] += bond.valency
+                # bond_valency[i1, i2] = bond_valency[i2, i1] = bond.valency
+                # bond_length[i1, i2] = bond_length[i2, i1] = bond.dist
+                # bond_energy[i1, i2] = bond_energy[i2, i1] = bond.strength
+                bonds.append((i1, i2))
+
+        # bonds_pruned = False
+
+        # # Prune bonds
+        # for i in range(self.n_atoms):
+        #     v = valency[self.symbols[i]]
+        #     if bond_count[i] > v:
+        #         print('=====')
+        #         print(i, bond_count[i])
+        #         print(bond_valency[i, :])
+        #         print(bond_energy[i, :])
+
+
         self.bonds = bonds#np.array(bonds, dtype='int8')
 
     def __compute_bond(self, i1, i2, s1, s2, p1, p2):
         pair = (s1, s2)
 
-        #s = set([2, 7])
-        #if atom1.index in s and atom2.index in s:
-        #    print(pair, pair in bond_distances)
         if pair in bond_distances:
             dist = self.__get_distance(p1, p2)
-            bd_pair = bond_distances[pair]
-            for bond_dist_min, bond_dist_max in bd_pair:
-                #print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
-                #if atom1.index in s and atom2.index in s:
-                #    print(pair, atom1.index, atom2.index, dist, bond_dist_min, bond_dist_max, dist >= bond_dist_min and dist <= bond_dist_max)
-                #    pass
+            bond_defs_for_pair = bond_distances[pair]
+            for bond_def in bond_defs_for_pair:
+                if self.test_atom_index_set is not None and i1 in self.test_atom_index_set and i2 in self.test_atom_index_set:
+                    print(pair, i1, i2, dist, bond_def.min_dist, bond_def.max_dist, dist >= bond_def.min_dist and dist <= bond_def.max_dist)
 
-                if dist >= bond_dist_min and dist <= bond_dist_max:
-                    return (i1, i2)
+                if dist >= bond_def.min_dist and dist <= bond_def.max_dist:
+                    return Bond(dist, bond_def.valency, bond_def.strength)
             
         return None
 
