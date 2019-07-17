@@ -159,7 +159,7 @@ class Molecule:
                 # bond_valency[i1, i2] = bond_valency[i2, i1] = bond.valency
                 # bond_length[i1, i2] = bond_length[i2, i1] = bond.dist
                 # bond_energy[i1, i2] = bond_energy[i2, i1] = bond.strength
-                bonds.append((i1, i2))
+                bonds.append((i1, i2, bond))
 
         # bonds_pruned = False
 
@@ -204,7 +204,7 @@ class Molecule:
                         
         if len(self.bonds) > 0:
             sio.write('Bonds:\n')
-            for i1, i2 in self.bonds:
+            for i1, i2, _ in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
         sio.write('\n')
 
@@ -219,7 +219,7 @@ class Molecule:
         for i in range(self.n_atoms):
             edges[i] = []
 
-        for i, j in self.bonds:
+        for i, j, _ in self.bonds:
             edges[i].append(j)
             edges[j].append(i)
 
@@ -285,7 +285,7 @@ def plt_plot_molecule(molecule):
     for i in range(molecule.n_atoms):
         ax.text(molecule.positions[i, 0], molecule.positions[i, 1], molecule.positions[i, 2], '{} {}'.format(molecule.symbols[i], i))
 
-    for i1, i2 in molecule.bonds:
+    for i1, i2, b in molecule.bonds:
         a1 = molecule.positions[i1, :]
         a2 = molecule.positions[i2, :]
         ax.plot([a1[0], a2[0]], [a1[1], a2[1]], [a1[2], a2[2]], 'black')
