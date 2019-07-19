@@ -132,7 +132,7 @@ class Molecule:
         self.symbols = [c for c in df.atom.array]
 
     def __compute_bonds(self):
-        bonds = []
+        bonds = {}
 
         # bond_count = [0] * self.n_atoms
         # bond_valency = np.zeros((self.n_atoms, self.n_atoms))
@@ -159,7 +159,9 @@ class Molecule:
                 # bond_valency[i1, i2] = bond_valency[i2, i1] = bond.valency
                 # bond_length[i1, i2] = bond_length[i2, i1] = bond.dist
                 # bond_energy[i1, i2] = bond_energy[i2, i1] = bond.strength
-                bonds.append((i1, i2, bond))
+
+                #bonds.append((i1, i2, bond))
+                bonds[(i1, i2)] = bond
 
         # bonds_pruned = False
 
@@ -204,7 +206,7 @@ class Molecule:
                         
         if len(self.bonds) > 0:
             sio.write('Bonds:\n')
-            for i1, i2, _ in self.bonds:
+            for i1, i2 in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
         sio.write('\n')
 
@@ -219,7 +221,7 @@ class Molecule:
         for i in range(self.n_atoms):
             edges[i] = []
 
-        for i, j, _ in self.bonds:
+        for i, j in self.bonds:
             edges[i].append(j)
             edges[j].append(i)
 
