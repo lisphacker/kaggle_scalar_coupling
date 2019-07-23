@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 import xgboost as xgb
+import lightgbm as lgb
 
 from util import score
 
@@ -124,21 +125,32 @@ class Model:
         
         return input
 
+class SKModel(Model):
+    def __init__(self, flatten_output=True, **model_args):
+        Model.__init__(self, **model_args)
 
-class XGBModel(Model):
-    def __init__(self, **kwargs):
-        Model.__init__(self, **kwargs)
-
-        self.model = xgb.XGBRegressor()
+        self.flatten_output = flatten_output
 
     def fit(self, input_df, output_df):
         self.setup_data(input_df, output_df)
 
-        self.model.fit(self.combined_inputs.T, self.output.reshape((len(self.output), 1)))
+        ref_output = self.output.flatten() if self.flatten_output else self.output.reshape((len(self.output), 1))
+        self.model.fit(self.combined_inputs.T, ref_output)
 
     def evaluate(self, input_df, output_df):
         self.setup_data(input_df, output_df)
 
         test_output = self.model.predict(self.combined_inputs.T)
-        return score(output_df, self.output, test_output)
+        return test_output, score(output_df, self.output, test_output)
 
+class XGBModel(SKModel):
+    def __init__(self, model_args, xgb_args={}):
+        SKModel.__init__(self, **model_args)
+
+        self.model = xgb.XGBRegressor(**xgb_args)
+
+class LGBModel(SKModel):
+    def __init__(self, model_args, xgb_args={}):
+        SKModel.__init__(self, **model_args)
+
+        self.model = lgb.LGBMModel(**xgb_args)
