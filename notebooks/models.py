@@ -1,8 +1,14 @@
 import pandas as pd
 import numpy as np
 
+from numba import jit
+
 import xgboost as xgb
 import lightgbm as lgb
+
+import tensorflow as tf
+from tensorflow.keras import Model, Input
+from tensorflow.keras.layers import Dense
 
 from util import score
 import chemistry
@@ -52,7 +58,7 @@ class Model:
         n = len(data)
 
         coupling_input = np.zeros((len(self.coupling_types), n), dtype='float32')
-        atom_input = [None] * 4
+        atom_input = [None] * 5
         for i in range(len(atom_input)):
             atom_input[i] = np.zeros((len(self.atom_types) + 1, n), dtype='float32')
 
@@ -93,9 +99,21 @@ class Model:
                     atom_input[j2][len(self.atom_types), i] = chemistry.atom_size[syms[j2]]
 
                     i0 = i1
+
+                atom_input[4][:, i] = atom_input[len(path) - 1][:, i]
             except Exception as e:
                 pass
                 
+        # print('=====================')
+        # print(self.atom_type_index, self.coupling_type_index)
+        # print()
+        # print(coupling_input)
+        # print()
+        # print(atom_input)
+        # print()
+        # print(bond_input)
+        # print()
+
         return (coupling_input, atom_input, bond_input)
 
     def make_output(self, data):
@@ -140,6 +158,14 @@ class SKModel(Model):
         ref_output = self.output.flatten() if self.flatten_output else self.output.reshape((len(self.output), 1))
         self.model.fit(self.combined_inputs.T, ref_output)
 
+    def corr(self, input_df, output_df):
+        self.setup_data(input_df, output_df)
+
+        n_features, n_samples = self.combined_inputs.shape
+
+        for i in range(n_features):
+            print(i, np.correlate(self.combined_inputs[i, :].flatten(), self.output.flatten()))
+
     def evaluate(self, input_df, output_df):
         self.setup_data(input_df, output_df)
 
@@ -157,3 +183,6 @@ class LGBModel(SKModel):
         SKModel.__init__(self, **model_args)
 
         self.model = lgb.LGBMRegressor(**xgb_args)
+
+class NNModel(Model):
+    pass
