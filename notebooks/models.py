@@ -5,6 +5,7 @@ import xgboost as xgb
 import lightgbm as lgb
 
 from util import score
+import chemistry
 
 def partition_data(data_df, count=None, train_frac=0.7):
     n_labelled = count if count is not None else len(data_df)
@@ -53,7 +54,7 @@ class Model:
         coupling_input = np.zeros((len(self.coupling_types), n), dtype='float32')
         atom_input = [None] * 4
         for i in range(len(atom_input)):
-            atom_input[i] = np.zeros((len(self.atom_types), n), dtype='float32')
+            atom_input[i] = np.zeros((len(self.atom_types) + 1, n), dtype='float32')
 
         bond_input = [None] * 3
         for i in range(len(bond_input)):
@@ -70,8 +71,9 @@ class Model:
             
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
-            
+
             atom_input[0][self.atom_type_index[syms[0]], i] = 1
+            atom_input[0][len(self.atom_types), i] = chemistry.atom_size[syms[0]]
             
             try:
                 i0 = path[0]
@@ -87,10 +89,11 @@ class Model:
                     j2 = j + 1
 
                     bond_input[j][:, i] = [b.dist, b.valency, b.strength]            
-                    atom_input[j2][atom_index[syms[j2]], i] = 1
+                    atom_input[j2][self.atom_type_index[syms[j2]], i] = 1
+                    atom_input[j2][len(self.atom_types), i] = chemistry.atom_size[syms[j2]]
 
                     i0 = i1
-            except:
+            except Exception as e:
                 pass
                 
         return (coupling_input, atom_input, bond_input)
@@ -153,4 +156,4 @@ class LGBModel(SKModel):
     def __init__(self, model_args, xgb_args={}):
         SKModel.__init__(self, **model_args)
 
-        self.model = lgb.LGBMModel(**xgb_args)
+        self.model = lgb.LGBMRegressor(**xgb_args)
