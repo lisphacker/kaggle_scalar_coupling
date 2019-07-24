@@ -95,10 +95,11 @@ atom_color = {
 
 atom_size = {
     'C': 12,
-    'H': 4,
+    'H': 1,
     'F': 19,
     'O': 16,
-    'N': 14
+    'N': 14,
+    'X': 0
 }
 
 valency = {    
