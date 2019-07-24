@@ -44,12 +44,24 @@ class Model:
         self.atom_type_index = {a:i for i, a in enumerate(self.atom_types)}
 
     def setup_data(self, input_df, output_df=None):
-        self.coupling_types = set(input_df.type.unique()) | set(output_df.type.unique())
+        self.coupling_types = set(input_df.type.unique())
+        if output_df is not None:
+            self.coupling_types = self.coupling_types | set(output_df.type.unique())
         self.coupling_type_index = {t:i for i, t in enumerate(self.coupling_types)}
 
-        self.coupling_types = set(input_df.type.unique()) | set(output_df.type.unique())
-
         self.input_df = self.make_input(input_df)
+
+        numeric_col_names = []        
+        columns_to_remove = set(['id', 'scalar_coupling_constant', 'atom_index_0', 'atom_index_1'])
+        dtypes_to_keep = set([np.dtype(tn) for tn in ['int8', 'int16', 'float32']])
+        for col_name, dtype in self.input_df.dtypes.items():
+            if col_name in columns_to_remove:
+                continue
+            if dtype not in dtypes_to_keep:
+                continue
+            numeric_col_names.append(col_name)
+
+        self.numeric_input_df = self.input_df[numeric_col_names]
         
         if output_df is not None:   
             self.output_df = self.make_output(output_df)
@@ -139,7 +151,7 @@ class Model:
             bi = i * 3
             df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info[bi    , :], index=df.index)
             df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info[bi + 1, :], index=df.index)
-            df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info[bi + 1, :], index=df.index)
+            df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info[bi + 2, :], index=df.index)
 
         return df
         
@@ -247,10 +259,8 @@ class SKModel(Model):
     def fit(self, input_df, output_df):
         self.setup_data(input_df, output_df)
 
-        print(self.input_df.values)
-
         ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
-        self.model.fit(self.input_df.values, ref_output)
+        self.model.fit(self.numeric_input_df.values, ref_output)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
@@ -259,8 +269,14 @@ class SKModel(Model):
     def evaluate(self, input_df, output_df):
         self.setup_data(input_df, output_df)
 
-        test_output = self.model.predict(self.combined_inputs.T)
-        return test_output, score(output_df, self.output, test_output)
+        ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
+        test_output = self.model.predict(self.numeric_input_df.values)
+        return test_output, score(output_df, ref_output, test_output)
+
+    def predict(self, input_df):
+        self.setup_data(input_df)
+
+        return self.model.predict(self.numeric_input_df.values)
 
 class XGBModel(SKModel):
     def __init__(self, model_args, xgb_args={}):
