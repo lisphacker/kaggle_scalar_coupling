@@ -93,10 +93,26 @@ class Model:
 
         return merged
 
-    def make_atom_columns(self, df, atom_sym_column, prefix):
+    def make_atom_columns(self, df, atom_sym_column, atom_index_column, prefix):
         for a in self.atom_types:
             df[f'{prefix}_{a}'] = (atom_sym_column == a).astype('int8')
         df[f'{prefix}_weight'] = pd.Series([chemistry.atom_size[atom] for atom in atom_sym_column], index=df.index, dtype='int8')
+
+        df['ai'] = atom_index_column
+
+        m = df.merge(self.structures, left_on=['molecule_name', 'ai'], right_on=['molecule_name', 'atom_index'])
+        m.index = df.index
+        #print(df.columns)
+        #print(self.structures.columns)
+        #print(m.columns)
+
+        df.drop(columns=['ai'])
+        for c in ['dist_to_mean']:
+            df[f'{prefix}_{c}'] = m[c]
+
+        #print(df.columns)
+        #print()
+
 
     def make_input(self, input_df):
         df = self.make_dist(input_df)
@@ -104,14 +120,16 @@ class Model:
         for t in self.coupling_types:
             df[f'coupling_{t}'] = (df.type == t).astype('int8')
 
-        self.make_atom_columns(df, df.atom_0, 'atom0')
-        self.make_atom_columns(df, df.atom_1, 'atomN')
+        self.make_atom_columns(df, df.atom_0, df.atom_index_0, 'atom0')
+        self.make_atom_columns(df, df.atom_1, df.atom_index_1, 'atomN')
 
         n = len(input_df)
 
         atom_syms = [None] * 3
+        atom_indices = [None] * 3
         for i in range(3):
             atom_syms[i] = pd.Categorical(['X'] * n, categories=list(self.atom_types) + ['X'])
+            atom_indices[i] = np.zeros(n, dtype='int16')
 
         bond_info = np.zeros((9, n), dtype='float32')
 
@@ -126,6 +144,7 @@ class Model:
                 i0 = path[0]
                 for ai, (i1, sym) in enumerate(zip(path[1:], syms[1:])):
                     atom_syms[ai][i] = sym
+                    atom_indices[ai][i] = i1
 
                     b = bonds.get((i0, i1), None)
                     if b is None:
@@ -143,9 +162,9 @@ class Model:
             except:
                 pass
 
-        self.make_atom_columns(df, pd.Series(atom_syms[0], index=df.index), 'atom1')
-        self.make_atom_columns(df, pd.Series(atom_syms[1], index=df.index), 'atom2')
-        self.make_atom_columns(df, pd.Series(atom_syms[2], index=df.index), 'atom3')
+        self.make_atom_columns(df, pd.Series(atom_syms[0], index=df.index), pd.Series(atom_indices[0], index=df.index), 'atom1')
+        self.make_atom_columns(df, pd.Series(atom_syms[1], index=df.index), pd.Series(atom_indices[1], index=df.index), 'atom2')
+        self.make_atom_columns(df, pd.Series(atom_syms[2], index=df.index), pd.Series(atom_indices[2], index=df.index), 'atom3')
 
         for i in range(3):
             bi = i * 3
