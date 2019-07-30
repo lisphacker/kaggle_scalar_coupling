@@ -172,6 +172,12 @@ class Model:
             df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info[bi + 1, :], index=df.index)
             df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info[bi + 2, :], index=df.index)
 
+        # cols = ['molecule_name']
+        # for c in self.structures.columns:
+        #     if c[0] == 'n':
+        #         cols.append(c)
+        # df = df.merge(self.structures[cols].groupby('molecule_name').nth(0), how='left', left_on=['molecule_name'], right_on=['molecule_name'])
+
         return df
         
     def make_output(self, output_df):
