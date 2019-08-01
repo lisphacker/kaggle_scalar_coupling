@@ -102,6 +102,14 @@ atom_size = {
     'X': 0
 }
 
+atomic_number = {
+    'C': 6,
+    'H': 1,
+    'F': 9,
+    'O': 8,
+    'N': 7,
+    'X': 0
+}
 valency = {    
     'C': 4,
     'H': 1,
@@ -111,13 +119,14 @@ valency = {
 }
 
 class Molecule:
-    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds', 'test_atom_index_set']
+    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds', 'test_atom_index_set', 'field_intensity']
 
-    def __init__(self, df, test_atom_index_set=None):
+    def __init__(self, df=None, test_atom_index_set=None):
         self.test_atom_index_set = test_atom_index_set
 
-        self.__init(df, test_atom_index_set)    
-        self.__compute_bonds()
+        if df is not None:
+            self.__init(df, test_atom_index_set)    
+            self.__compute_bonds()
 
     def __init(self, df, test_atom_index_set):
         self.name = df.iloc[0, 0]
@@ -131,6 +140,16 @@ class Molecule:
         self.positions[:, 1] = df.y.array
         self.positions[:, 2] = df.z.array
         self.symbols = [c for c in df.atom.array]
+
+    @staticmethod
+    def copy(m):
+        mnew = Molecule()
+        mnew.name = m.name
+        mnew.n_atoms = m.n_atoms
+        mnew.positions = m.positions
+        mnew.symbols = m.symbols
+        mnew.bonds = m.bonds
+        return mnew
 
     def __compute_bonds(self):
         bonds = {}
@@ -209,6 +228,11 @@ class Molecule:
             sio.write('Bonds:\n')
             for i1, i2 in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
+
+        if self.field_intensity is not None and len(self.field_intensity) > 0:
+            sio.write('Field intensity :\n')
+            for i in range(self.n_atoms):
+                sio.write('  {}({}) - {}\n'.format(self.symbols[i], i, self.field_intensity[i]))
         sio.write('\n')
 
         return sio.getvalue()

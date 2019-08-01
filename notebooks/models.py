@@ -3,17 +3,30 @@ import numpy as np
 
 from numba import jit
 
+from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
+
 import xgboost as xgb
 import lightgbm as lgb
 
 import tensorflow as tf
-from tensorflow.keras import Model, Input
-from tensorflow.keras.layers import Dense
+from tensorflow.keras import Model as KerasModel, Input
+from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, BatchNormalization
+from tensorflow.keras.optimizers import Adam
 
 from util import score
 import chemistry
 
 from pprint import pprint
+
+class DummyScaler:
+    def fit(self, X):
+        return X
+
+    def transform(self, X):
+        return X
+
+    def inverse_transform(self, X):
+        return X
 
 def partition_data(data_df, count=None, train_frac=0.7):
     n_labelled = count if count is not None else len(data_df)
@@ -30,7 +43,7 @@ def partition_data(data_df, count=None, train_frac=0.7):
     return train, test
 
 class Model:
-    def __init__(self, molecules, structures):
+    def __init__(self, molecules, structures, normalize_input=False):
         if molecules is None:
             raise Exception('molecules cannot be None')
 
@@ -42,6 +55,13 @@ class Model:
             
         self.atom_types = set(structures.atom.unique())
         self.atom_type_index = {a:i for i, a in enumerate(self.atom_types)}
+
+        self.normalize_input = normalize_input
+
+        if self.normalize_input:
+            scaler = RobustScaler
+            self.input_scaler = scaler()
+            self.output_scaler = scaler()
 
     def setup_data(self, input_df, output_df=None):
         self.coupling_types = set(input_df.type.unique())
@@ -109,6 +129,9 @@ class Model:
         df.drop(columns=['ai'])
         for c in ['dist_to_mean']:
             df[f'{prefix}_{c}'] = m[c]
+
+        fi_list = [self.molecules[mn].field_intensity[ai] for (mn, ai) in zip(df.molecule_name, atom_index_column)]
+        df[f'{prefix}_fi'] = pd.Series(fi_list, dtype='float32')
 
         #print(df.columns)
         #print()
@@ -183,6 +206,11 @@ class Model:
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
 
+    def fit_scalers(self):
+        self.input_scaler.fit(self.numeric_input_df.values)
+        if self.output_df is not None:
+            self.output_scaler.fit(self.output_df.values)
+
 class SKModel(Model):
     def __init__(self, flatten_output=True, **model_args):
         Model.__init__(self, **model_args)
@@ -224,4 +252,64 @@ class LGBModel(SKModel):
         self.model = lgb.LGBMRegressor(**xgb_args)
 
 class NNModel(Model):
-    pass
+    def __init__(self, model_args, nn_args={}):
+        Model.__init__(self, normalize_input=True, **model_args)
+
+    def fit(self, input_df, output_df):
+        self.setup_data(input_df, output_df)
+
+        self.model = self.create_model(self.numeric_input_df.values.shape[1])        
+
+        self.fit_scalers()
+
+        x = self.input_scaler.inverse_transform(self.input_scaler.transform(self.numeric_input_df.values))
+
+        i = self.input_scaler.transform(self.numeric_input_df.values)
+        o = self.output_scaler.transform(self.output_df.values)
+
+        self.model.fit(i, o)
+
+    def corr(self, input_df, output_df):
+        self.setup_data(input_df, output_df)
+
+        return self.input_df.corr()
+
+    def evaluate(self, input_df, output_df):
+        self.setup_data(input_df, output_df)
+
+        i = self.input_scaler.transform(self.numeric_input_df.values)
+        ref_output = self.output_df.values
+        test_output = self.output_scaler.inverse_transform(self.model.predict(i))
+
+        return test_output, score(output_df, ref_output, test_output)
+
+    def predict(self, input_df):
+        self.setup_data(input_df)
+
+        i = self.input_scaler.transform(self.numeric_input_df.values)
+
+        return self.output_scaler.inverse_transform(self.model.predict(i))
+
+    def create_model(self, num_inputs):
+        i = l = Input(shape=(num_inputs,))
+
+        for n in [256, 1024, 512, 256, 128, 64]:
+            l = self.create_complex_layer(l, n)
+            n >>= 1
+
+        o = Dense(1, activation='linear')(l)
+
+        model = KerasModel(inputs=[i], outputs=[o])
+        model.compile(optimizer=Adam(), loss='mae')
+
+        #model.summary()
+
+        return model
+
+    def create_complex_layer(self, l, n):
+        l = Dense(n)(l)
+        l = BatchNormalization()(l)
+        l = LeakyReLU(alpha=0.1)(l)
+        l = Dropout(0.1)(l)
+        return l
+
