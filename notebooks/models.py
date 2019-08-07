@@ -4,8 +4,9 @@ import numpy as np
 from numba import jit
 
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
 
-import xgboost as xgb
+#import xgboost as xgb
 import lightgbm as lgb
 
 import tensorflow as tf
@@ -42,6 +43,10 @@ def partition_data(data_df, count=None, train_frac=0.7):
 
     return train, test
 
+class MM11Scaler(MinMaxScaler):
+    def __init__(self):
+        MinMaxScaler.__init__(self, feature_range=(-1, 1))
+
 class Model:
     def __init__(self, molecules, structures, normalize_input=False):
         if molecules is None:
@@ -59,6 +64,7 @@ class Model:
         self.normalize_input = normalize_input
 
         if self.normalize_input:
+            # scaler = MM11Scaler
             scaler = RobustScaler
             self.input_scaler = scaler()
             self.output_scaler = scaler()
@@ -122,19 +128,29 @@ class Model:
 
         m = df.merge(self.structures, left_on=['molecule_name', 'ai'], right_on=['molecule_name', 'atom_index'])
         m.index = df.index
-        #print(df.columns)
-        #print(self.structures.columns)
-        #print(m.columns)
+
+        mask = atom_sym_column == 'X'
 
         df.drop(columns=['ai'])
         for c in ['dist_to_mean']:
             df[f'{prefix}_{c}'] = m[c]
+            df.loc[mask, [f'{prefix}_{c}']] = 0
 
         fi_list = [self.molecules[mn].field_intensity[ai] for (mn, ai) in zip(df.molecule_name, atom_index_column)]
-        df[f'{prefix}_fi'] = pd.Series(fi_list, dtype='float32')
+        fi_array = np.array(fi_list, dtype='float32')
+        df[f'{prefix}_fi'] = pd.Series(fi_array, index=df.index)
+        df.loc[mask, [f'{prefix}_fi']] = 0
 
-        #print(df.columns)
-        #print()
+        fi_list = [self.molecules[mn].simple_field_intensity[ai] for (mn, ai) in zip(df.molecule_name, atom_index_column)]
+        fi_array = np.array(fi_list, dtype='float32')
+        df[f'{prefix}_simple_fi'] = pd.Series(fi_array, index=df.index)
+        df.loc[mask, [f'{prefix}_simple_fi']] = 0
+
+        # force_list = [self.molecules[mn].force[ai] for (mn, ai) in zip(df.molecule_name, atom_index_column)]
+        # force_array = np.array(force_list, dtype='float32')
+        # df[f'{prefix}_force'] = pd.Series(force_array, index=df.index)
+        # df.loc[mask, [f'{prefix}_force']] = 0
+
 
 
     def make_input(self, input_df):
@@ -239,17 +255,24 @@ class SKModel(Model):
 
         return self.model.predict(self.numeric_input_df.values)
 
-class XGBModel(SKModel):
-    def __init__(self, model_args, xgb_args={}):
-        SKModel.__init__(self, **model_args)
+# class XGBModel(SKModel):
+#     def __init__(self, model_args, xgb_args={}):
+#         SKModel.__init__(self, **model_args)
 
-        self.model = xgb.XGBRegressor(**xgb_args)
+#         self.model = xgb.XGBRegressor(**xgb_args)
 
 class LGBModel(SKModel):
-    def __init__(self, model_args, xgb_args={}):
+    def __init__(self, model_args, lightgbm_args={}):
         SKModel.__init__(self, **model_args)
 
-        self.model = lgb.LGBMRegressor(**xgb_args)
+        self.model = lgb.LGBMRegressor(**lightgbm_args)
+
+class RFModel(SKModel):
+    def __init__(self, model_args, rf_args={}):
+        SKModel.__init__(self, **model_args)
+
+        self.model = RandomForestRegressor(**rf_args)
+    
 
 class NNModel(Model):
     def __init__(self, model_args, nn_args={}):
@@ -262,12 +285,10 @@ class NNModel(Model):
 
         self.fit_scalers()
 
-        x = self.input_scaler.inverse_transform(self.input_scaler.transform(self.numeric_input_df.values))
-
         i = self.input_scaler.transform(self.numeric_input_df.values)
         o = self.output_scaler.transform(self.output_df.values)
 
-        self.model.fit(i, o)
+        self.model.fit(i, o, epochs=32)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
@@ -293,7 +314,7 @@ class NNModel(Model):
     def create_model(self, num_inputs):
         i = l = Input(shape=(num_inputs,))
 
-        for n in [256, 1024, 512, 256, 128, 64]:
+        for n in [128, 256, 512, 1024, 512, 256, 128, 64]:
             l = self.create_complex_layer(l, n)
             n >>= 1
 
@@ -307,7 +328,7 @@ class NNModel(Model):
         return model
 
     def create_complex_layer(self, l, n):
-        l = Dense(n)(l)
+        l = Dense(n, kernel_initializer='normal')(l)
         l = BatchNormalization()(l)
         l = LeakyReLU(alpha=0.1)(l)
         l = Dropout(0.1)(l)

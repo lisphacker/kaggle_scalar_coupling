@@ -119,7 +119,10 @@ valency = {
 }
 
 class Molecule:
-    __slots__ = ['name', 'n_atoms', 'positions', 'symbols', 'bonds', 'test_atom_index_set', 'field_intensity']
+    __slots__ = [
+        'name', 'n_atoms', 'positions', 'symbols', 'bonds', 
+        'test_atom_index_set', 'simple_field_intensity', 'field_intensity',
+        'force_per_pair', 'force']
 
     def __init__(self, df=None, test_atom_index_set=None):
         self.test_atom_index_set = test_atom_index_set
@@ -229,10 +232,22 @@ class Molecule:
             for i1, i2 in self.bonds:
                 sio.write('  {}({}) - {}({})\n'.format(self.symbols[i1], i1, self.symbols[i2], i2))
 
-        if self.field_intensity is not None and len(self.field_intensity) > 0:
-            sio.write('Field intensity :\n')
-            for i in range(self.n_atoms):
-                sio.write('  {}({}) - {}\n'.format(self.symbols[i], i, self.field_intensity[i]))
+        try:
+            if self.field_intensity is not None and len(self.field_intensity) > 0:
+                sio.write('Simple field intensity :\n')
+                for i in range(self.n_atoms):
+                    sio.write('  {}({}) - {}\n'.format(self.symbols[i], i, self.simple_field_intensity[i]))
+        except:
+            pass
+
+        try:
+            if self.field_intensity is not None and len(self.field_intensity) > 0:
+                sio.write('Field intensity :\n')
+                for i in range(self.n_atoms):
+                    sio.write('  {}({}) - {}\n'.format(self.symbols[i], i, self.field_intensity[i]))
+        except:
+            pass
+
         sio.write('\n')
 
         return sio.getvalue()
