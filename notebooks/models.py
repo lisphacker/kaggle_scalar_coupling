@@ -11,7 +11,7 @@ import lightgbm as lgb
 
 import tensorflow as tf
 from tensorflow.keras import Model as KerasModel, Input
-from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, BatchNormalization
+from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, BatchNormalization, Concatenate
 from tensorflow.keras.optimizers import Adam
 
 from util import score
@@ -288,7 +288,7 @@ class NNModel(Model):
         i = self.input_scaler.transform(self.numeric_input_df.values)
         o = self.output_scaler.transform(self.output_df.values)
 
-        self.model.fit(i, o, epochs=32)
+        self.model.fit(i, o, epochs=300, batch_size=512, verbose=0)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
@@ -312,9 +312,10 @@ class NNModel(Model):
         return self.output_scaler.inverse_transform(self.model.predict(i))
 
     def create_model(self, num_inputs):
+        # 0.56 for 1JHC
         i = l = Input(shape=(num_inputs,))
 
-        for n in [128, 256, 512, 1024, 512, 256, 128, 64]:
+        for n in ([1024] * 11):
             l = self.create_complex_layer(l, n)
             n >>= 1
 
@@ -330,7 +331,9 @@ class NNModel(Model):
     def create_complex_layer(self, l, n):
         l = Dense(n, kernel_initializer='normal')(l)
         l = BatchNormalization()(l)
-        l = LeakyReLU(alpha=0.1)(l)
-        l = Dropout(0.1)(l)
+        # l = LeakyReLU(alpha=0.2)(l)
+        # l = Dropout(0.1)(l)
+        l = LeakyReLU(alpha=0.05)(l)
+        l = Dropout(0.2)(l)
         return l
 
