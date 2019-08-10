@@ -288,7 +288,7 @@ class NNModel(Model):
         i = self.input_scaler.transform(self.numeric_input_df.values)
         o = self.output_scaler.transform(self.output_df.values)
 
-        self.model.fit(i, o, epochs=300, batch_size=512, verbose=0)
+        self.model.fit(i, o, epochs=300, batch_size=512, verbose=1)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
