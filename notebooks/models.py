@@ -277,9 +277,26 @@ class RFModel(SKModel):
 class NNModel(Model):
     def __init__(self, model_args, nn_args={}):
         Model.__init__(self, normalize_input=True, **model_args)
+        self.dipole_moments = nn_args.dipole_moments
+        self.magnetic_shielding_tensors = nn_args.magnetic_shielding_tensors
+        self.mulliken_charges = nn_args.mulliken_charges
+        self.potential_energy = nn_args.potential_energy
+        self.scalar_coupling_contributions = nn_args.scalar_coupling_contributions
+
+
+    def setup_additional_output_data(self):
+        print(self.input_df.columns)
+        print(self.output_df.columns)
+        print(self.dipole_moments.columns)
+
+        self.dipole_moments_df = self.input_df[['molecule_name']].merge(dipole_moments, left_on='molecule_name', right_on='molecule_name')
+        
+
 
     def fit(self, input_df, output_df):
         self.setup_data(input_df, output_df)
+        self.setup_additional_output_data()
+        return
 
         self.model = self.create_model(self.numeric_input_df.values.shape[1])        
 
@@ -292,11 +309,13 @@ class NNModel(Model):
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
+        self.setup_additional_output_data()
 
         return self.input_df.corr()
 
     def evaluate(self, input_df, output_df):
         self.setup_data(input_df, output_df)
+        self.setup_additional_output_data()
 
         i = self.input_scaler.transform(self.numeric_input_df.values)
         ref_output = self.output_df.values
@@ -311,12 +330,38 @@ class NNModel(Model):
 
         return self.output_scaler.inverse_transform(self.model.predict(i))
 
+    def create_model_test(self, num_inputs):
+        # 0.56 for 1JHC
+        i = Input(shape=(num_inputs,))
+
+        l = i
+        for j, n in enumerate([1024] * 11):
+            l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
+            n >>= 1
+        l1 = l
+
+        l = i
+        for j, n in enumerate([2048] * 8):
+            l = self.create_complex_layer(l, n, name=f'2048x8_{j}')
+            n >>= 1
+        l2 = l
+
+        l = Concatenate()([l1, l2])
+        o = Dense(1, activation='linear', name='merged')(l)
+
+        model = KerasModel(inputs=[i], outputs=[o])
+        model.compile(optimizer=Adam(), loss='mae')
+
+        #model.summary()
+
+        return model
+
     def create_model(self, num_inputs):
         # 0.56 for 1JHC
         i = l = Input(shape=(num_inputs,))
 
-        for n in ([1024] * 11):
-            l = self.create_complex_layer(l, n)
+        for j, n in enumerate([1024] * 11):
+            l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
             n >>= 1
 
         o = Dense(1, activation='linear')(l)
@@ -328,12 +373,12 @@ class NNModel(Model):
 
         return model
 
-    def create_complex_layer(self, l, n):
-        l = Dense(n, kernel_initializer='normal')(l)
-        l = BatchNormalization()(l)
+    def create_complex_layer(self, l, n, name=''):
+        l = Dense(n, kernel_initializer='normal', name=f'{name}_dense')(l)
+        l = BatchNormalization(name=f'{name}_batch_norm')(l)
         # l = LeakyReLU(alpha=0.2)(l)
         # l = Dropout(0.1)(l)
-        l = LeakyReLU(alpha=0.05)(l)
-        l = Dropout(0.2)(l)
+        l = LeakyReLU(alpha=0.05, name=f'{name}_leaky_relu')(l)
+        l = Dropout(0.2, name=f'{name}_dropout')(l)
         return l
 
