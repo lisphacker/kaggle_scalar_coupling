@@ -65,9 +65,9 @@ class Model:
 
         if self.normalize_input:
             # scaler = MM11Scaler
-            scaler = RobustScaler
-            self.input_scaler = scaler()
-            self.output_scaler = scaler()
+            self.scaler = RobustScaler
+            self.input_scaler = self.scaler()
+            self.output_scaler = self.scaler()
 
     def setup_data(self, input_df, output_df=None):
         self.coupling_types = set(input_df.type.unique())
@@ -284,6 +284,12 @@ class NNModel(Model):
         self.potential_energy = nn_args.potential_energy
         self.scalar_coupling_contributions = nn_args.scalar_coupling_contributions
 
+        if self.normalize_input:
+            self.dipole_moments_scaler = self.scaler()
+            self.magnetic_shielding_tensors_scaler = self.scaler()
+            self.mulliken_charges_scaler = self.scaler()
+            self.potential_energy_scaler = self.scaler()
+            self.scalar_coupling_contributions_scaler = self.scaler()
 
     def setup_additional_output_data(self):
         self.dipole_moments_output_df = self.input_df[['molecule_name']].merge(self.dipole_moments, left_on='molecule_name', right_on='molecule_name')
@@ -301,27 +307,44 @@ class NNModel(Model):
         
         self.potential_energy_output_df = self.input_df[['molecule_name']].merge(self.potential_energy, left_on='molecule_name', right_on='molecule_name')
         self.potential_energy_output_df.drop(columns=['molecule_name'], inplace=True)
-        print(self.potential_energy_output_df.columns)
         
         self.scalar_coupling_contributions_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
             .merge(self.scalar_coupling_contributions, left_on=['molecule_name', 'atom_index_0', 'atom_index_1'], right_on=['molecule_name', 'atom_index_0', 'atom_index_1'])
         self.scalar_coupling_contributions_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1', 'type'], inplace=True)
-        print(self.scalar_coupling_contributions_output_df.columns)
 
+
+    def fit_scalers(self):
+        Model.fit_scalers(self)
+
+        self.dipole_moments_scaler.fit(self.dipole_moments_output_df.values)
+        self.magnetic_shielding_tensors_scaler.fit(self.magnetic_shielding_tensors_output_df.values)
+        self.mulliken_charges_scaler.fit(self.mulliken_charges_output_df.values)
+        self.potential_energy_scaler.fit(self.potential_energy_output_df.values)
+        self.scalar_coupling_contributions_scaler.fit(self.scalar_coupling_contributions_output_df.values)
 
     def fit(self, input_df, output_df):
         self.setup_data(input_df, output_df)
         self.setup_additional_output_data()
-        return
 
-        self.model = self.create_model(self.numeric_input_df.values.shape[1])        
+        self.model = self.create_model(self.numeric_input_df.values.shape[1])
 
         self.fit_scalers()
 
         i = self.input_scaler.transform(self.numeric_input_df.values)
         o = self.output_scaler.transform(self.output_df.values)
 
-        self.model.fit(i, o, epochs=300, batch_size=512, verbose=1)
+
+        o_dipole_moments = self.dipole_moments_scaler.transform(self.dipole_moments_output_df.values)
+        o_magnetic_shielding_tensors = self.magnetic_shielding_tensors_scaler.transform(self.magnetic_shielding_tensors_output_df.values)
+        o_mulliken_charges = self.mulliken_charges_scaler.transform(self.mulliken_charges_output_df.values)
+        o_potential_energy = self.potential_energy_scaler.transform(self.potential_energy_output_df.values)
+        o_scalar_coupling_contributions = self.scalar_coupling_contributions_scaler.transform(self.scalar_coupling_contributions_output_df.values)
+
+
+        self.model.fit(
+            i, 
+            [o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions], 
+            epochs=1, batch_size=512, verbose=1)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
@@ -335,7 +358,8 @@ class NNModel(Model):
 
         i = self.input_scaler.transform(self.numeric_input_df.values)
         ref_output = self.output_df.values
-        test_output = self.output_scaler.inverse_transform(self.model.predict(i))
+        o = self.model.predict(i)
+        test_output = self.output_scaler.inverse_transform(o[0])
 
         return test_output, score(output_df, ref_output, test_output)
 
@@ -343,36 +367,47 @@ class NNModel(Model):
         self.setup_data(input_df)
 
         i = self.input_scaler.transform(self.numeric_input_df.values)
+        o = self.model.predict(i)
+        return self.output_scaler.inverse_transform(o[0])
 
-        return self.output_scaler.inverse_transform(self.model.predict(i))
-
-    def create_model_test(self, num_inputs):
+    def create_model(self, num_inputs):
         # 0.56 for 1JHC
         i = Input(shape=(num_inputs,))
 
         l = i
-        for j, n in enumerate([1024] * 11):
+        for j, n in enumerate([2048] * 11):
             l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
-            n >>= 1
-        l1 = l
 
-        l = i
-        for j, n in enumerate([2048] * 8):
-            l = self.create_complex_layer(l, n, name=f'2048x8_{j}')
-            n >>= 1
-        l2 = l
+        l_dipole_moments = l
+        l_magnetic_shielding_tensors = l
+        l_mulliken_charges = l
+        l_potential_energy = l
+        l_scalar_coupling_contributions = l
+       
+        for j, n in enumerate([1024] * 5):
+            l_dipole_moments = self.create_complex_layer(l_dipole_moments, n, name=f'dipole_moments_{j}')
+            l_magnetic_shielding_tensors = self.create_complex_layer(l_magnetic_shielding_tensors, n, name=f'magnetic_shielding_tensors_{j}')
+            l_mulliken_charges = self.create_complex_layer(l_mulliken_charges, n, name=f'mulliken_charges_{j}')
+            l_potential_energy = self.create_complex_layer(l_potential_energy, n, name=f'potential_energy_{j}')
+            l_scalar_coupling_contributions = self.create_complex_layer(l_scalar_coupling_contributions, n, name=f'scalar_coupling_contributions_{j}')
+            l = self.create_complex_layer(l, n, name=f'output_{j}')
 
-        l = Concatenate()([l1, l2])
+        o_dipole_moments = Dense(len(self.dipole_moments_output_df.columns), activation='linear', name='output_dipole_moments')(l_dipole_moments)
+        o_magnetic_shielding_tensors = Dense(len(self.magnetic_shielding_tensors_output_df.columns), activation='linear', name='output_magnetic_shielding_tensors')(l_magnetic_shielding_tensors)
+        o_mulliken_charges = Dense(len(self.mulliken_charges_output_df.columns), activation='linear', name='output_mulliken_charges')(l_mulliken_charges)
+        o_potential_energy = Dense(len(self.potential_energy_output_df.columns), activation='linear', name='output_potential_energy')(l_potential_energy)
+        o_scalar_coupling_contributions = Dense(len(self.scalar_coupling_contributions_output_df.columns), activation='linear', name='output_scalar_coupling_contributions')(l_scalar_coupling_contributions)
+
         o = Dense(1, activation='linear', name='merged')(l)
 
-        model = KerasModel(inputs=[i], outputs=[o])
+        model = KerasModel(inputs=[i], outputs=[o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions])
         model.compile(optimizer=Adam(), loss='mae')
 
         #model.summary()
 
         return model
 
-    def create_model(self, num_inputs):
+    def create_model_best(self, num_inputs):
         # 0.56 for 1JHC
         i = l = Input(shape=(num_inputs,))
 
