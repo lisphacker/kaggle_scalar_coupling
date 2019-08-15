@@ -277,6 +277,7 @@ class RFModel(SKModel):
 class NNModel(Model):
     def __init__(self, model_args, nn_args={}):
         Model.__init__(self, normalize_input=True, **model_args)
+
         self.dipole_moments = nn_args.dipole_moments
         self.magnetic_shielding_tensors = nn_args.magnetic_shielding_tensors
         self.mulliken_charges = nn_args.mulliken_charges
@@ -285,12 +286,27 @@ class NNModel(Model):
 
 
     def setup_additional_output_data(self):
-        print(self.input_df.columns)
-        print(self.output_df.columns)
-        print(self.dipole_moments.columns)
+        self.dipole_moments_output_df = self.input_df[['molecule_name']].merge(self.dipole_moments, left_on='molecule_name', right_on='molecule_name')
+        self.dipole_moments_output_df.drop(columns=['molecule_name'], inplace=True)
 
-        self.dipole_moments_df = self.input_df[['molecule_name']].merge(dipole_moments, left_on='molecule_name', right_on='molecule_name')
+        self.magnetic_shielding_tensors_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+            .merge(self.magnetic_shielding_tensors, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'])\
+            .merge(self.magnetic_shielding_tensors, left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('_0', '_1'))
+        self.magnetic_shielding_tensors_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1'], inplace=True)
+
+        self.mulliken_charges_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+            .merge(self.mulliken_charges, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'])\
+            .merge(self.mulliken_charges, left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('_0', '_1'))
+        self.mulliken_charges_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1'], inplace=True)
         
+        self.potential_energy_output_df = self.input_df[['molecule_name']].merge(self.potential_energy, left_on='molecule_name', right_on='molecule_name')
+        self.potential_energy_output_df.drop(columns=['molecule_name'], inplace=True)
+        print(self.potential_energy_output_df.columns)
+        
+        self.scalar_coupling_contributions_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+            .merge(self.scalar_coupling_contributions, left_on=['molecule_name', 'atom_index_0', 'atom_index_1'], right_on=['molecule_name', 'atom_index_0', 'atom_index_1'])
+        self.scalar_coupling_contributions_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1', 'type'], inplace=True)
+        print(self.scalar_coupling_contributions_output_df.columns)
 
 
     def fit(self, input_df, output_df):
