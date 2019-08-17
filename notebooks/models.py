@@ -76,6 +76,8 @@ class Model:
         self.coupling_type_index = {t:i for i, t in enumerate(self.coupling_types)}
 
         self.input_df = self.make_input(input_df)
+        self.make_complex_inputs(self.input_df)
+        self.cleanup_columns(self.input_df)
 
         numeric_col_names = []        
         columns_to_remove = set(['id', 'scalar_coupling_constant', 'atom_index_0', 'atom_index_1'])
@@ -132,7 +134,7 @@ class Model:
         mask = atom_sym_column == 'X'
 
         df.drop(columns=['ai'])
-        for c in ['dist_to_mean']:
+        for c in ['x', 'y', 'z', 'x_mean', 'y_mean', 'z_mean', 'dist_to_mean']:
             df[f'{prefix}_{c}'] = m[c]
             df.loc[mask, [f'{prefix}_{c}']] = 0
 
@@ -218,7 +220,21 @@ class Model:
         # df = df.merge(self.structures[cols].groupby('molecule_name').nth(0), how='left', left_on=['molecule_name'], right_on=['molecule_name'])
 
         return df
+
+    def make_complex_inputs(self, df):
+        return
+        for atomId in "0N":
+            prefix = f'atom{atomId}'
+            for axis in "xyz":
+                df[f'{prefix}_dir_{axis}'] = (df[f'{prefix}_{axis}'] - df[f'{prefix}_{axis}_mean']) / df[f'{prefix}_dist_to_mean']
+
+        df['cos0N'] = df['atom0_dir_x'] * df['atomN_dir_x'] + df['atom0_dir_y'] * df['atomN_dir_y'] + df['atom0_dir_z'] * df['atomN_dir_z']
         
+        pprint(list(df.columns))
+
+    def cleanup_columns(self, df):
+        pass
+
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
 
@@ -275,14 +291,24 @@ class RFModel(SKModel):
     
 
 class NNModel(Model):
-    def __init__(self, model_args, nn_args={}):
+    def __init__(
+        self, model_args, 
+        dipole_moments, magnetic_shielding_tensors, mulliken_charges,
+        potential_energy, scalar_coupling_contributions, 
+        epochs=300, batch_size=512, learning_rate=0.001, validation_split=0.2):
+
         Model.__init__(self, normalize_input=True, **model_args)
 
-        self.dipole_moments = nn_args.dipole_moments
-        self.magnetic_shielding_tensors = nn_args.magnetic_shielding_tensors
-        self.mulliken_charges = nn_args.mulliken_charges
-        self.potential_energy = nn_args.potential_energy
-        self.scalar_coupling_contributions = nn_args.scalar_coupling_contributions
+        self.dipole_moments = dipole_moments
+        self.magnetic_shielding_tensors = magnetic_shielding_tensors
+        self.mulliken_charges = mulliken_charges
+        self.potential_energy = potential_energy
+        self.scalar_coupling_contributions = scalar_coupling_contributions
+
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.validation_split = validation_split
 
         if self.normalize_input:
             self.dipole_moments_scaler = self.scaler()
@@ -341,10 +367,17 @@ class NNModel(Model):
         o_scalar_coupling_contributions = self.scalar_coupling_contributions_scaler.transform(self.scalar_coupling_contributions_output_df.values)
 
 
-        self.model.fit(
+        #es = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=8,verbose=1, mode='auto', restore_best_weights=True)
+        #rlr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1,patience=7, min_lr=1e-6, mode='auto', verbose=1)
+        #callbacks=[es, rlr]
+        callbacks=[]
+
+        history = self.model.fit(
             i, 
             [o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions], 
-            epochs=1, batch_size=512, verbose=1)
+            epochs=self.epochs, batch_size=self.batch_size, callbacks=callbacks, validation_split=self.validation_split, verbose=1)
+
+        return history
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
@@ -375,8 +408,8 @@ class NNModel(Model):
         i = Input(shape=(num_inputs,))
 
         l = i
-        for j, n in enumerate([2048] * 11):
-            l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
+        for j, n in enumerate([4096] * 6):
+            l = self.create_complex_layer(l, n, name=f'1024x15_{j}')
 
         l_dipole_moments = l
         l_magnetic_shielding_tensors = l
@@ -384,12 +417,13 @@ class NNModel(Model):
         l_potential_energy = l
         l_scalar_coupling_contributions = l
        
-        for j, n in enumerate([1024] * 5):
+        for j, n in enumerate([1024] * 1):
             l_dipole_moments = self.create_complex_layer(l_dipole_moments, n, name=f'dipole_moments_{j}')
             l_magnetic_shielding_tensors = self.create_complex_layer(l_magnetic_shielding_tensors, n, name=f'magnetic_shielding_tensors_{j}')
             l_mulliken_charges = self.create_complex_layer(l_mulliken_charges, n, name=f'mulliken_charges_{j}')
             l_potential_energy = self.create_complex_layer(l_potential_energy, n, name=f'potential_energy_{j}')
             l_scalar_coupling_contributions = self.create_complex_layer(l_scalar_coupling_contributions, n, name=f'scalar_coupling_contributions_{j}')
+
             l = self.create_complex_layer(l, n, name=f'output_{j}')
 
         o_dipole_moments = Dense(len(self.dipole_moments_output_df.columns), activation='linear', name='output_dipole_moments')(l_dipole_moments)
@@ -401,7 +435,8 @@ class NNModel(Model):
         o = Dense(1, activation='linear', name='merged')(l)
 
         model = KerasModel(inputs=[i], outputs=[o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions])
-        model.compile(optimizer=Adam(), loss='mae')
+
+        model.compile(optimizer=Adam(learning_rate=self.learning_rate), loss='mae')
 
         #model.summary()
 
