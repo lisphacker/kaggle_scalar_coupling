@@ -29,19 +29,23 @@ class DummyScaler:
     def inverse_transform(self, X):
         return X
 
-def partition_data(data_df, count=None, train_frac=0.7):
+def partition_data(data_df, count=None, train_frac=0.5, valid_frac=0.2):
     n_labelled = count if count is not None else len(data_df)
     n_train = int(n_labelled * train_frac)
+    n_valid = int(n_labelled * valid_frac)
     indices = np.arange(0, n_labelled)
     np.random.shuffle(indices)
-    
+
+    max_valid = n_train + n_valid    
     train_indices = indices[0:n_train]
-    test_indices = indices[n_train:]
+    valid_indices = indices[n_train:max_valid]
+    test_indices = indices[max_valid:]
     
     train = data_df.iloc[train_indices, :]
+    valid = data_df.iloc[valid_indices, :]
     test = data_df.iloc[test_indices, :]
 
-    return train, test
+    return train, valid, test
 
 class MM11Scaler(MinMaxScaler):
     def __init__(self):
@@ -75,29 +79,26 @@ class Model:
             self.coupling_types = self.coupling_types | set(output_df.type.unique())
         self.coupling_type_index = {t:i for i, t in enumerate(self.coupling_types)}
 
-        self.input_df = self.make_input(input_df)
-        self.make_complex_inputs(self.input_df)
-        self.cleanup_columns(self.input_df)
+        input_df = self.make_input(input_df)
+        self.make_complex_inputs(input_df)
+        self.cleanup_columns(input_df)
 
         numeric_col_names = []        
         columns_to_remove = set(['id', 'scalar_coupling_constant', 'atom_index_0', 'atom_index_1'])
         dtypes_to_keep = set([np.dtype(tn) for tn in ['int8', 'int16', 'float32']])
-        for col_name, dtype in self.input_df.dtypes.items():
+        for col_name, dtype in input_df.dtypes.items():
             if col_name in columns_to_remove:
                 continue
             if dtype not in dtypes_to_keep:
                 continue
             numeric_col_names.append(col_name)
 
-        self.numeric_input_df = self.input_df[numeric_col_names]
+        numeric_input_df = input_df[numeric_col_names]
         
         if output_df is not None:   
-            self.output_df = self.make_output(output_df)
+            output_df = self.make_output(output_df)
 
-        # print(self.input_df.columns)
-        # print(self.input_df)
-        # print()
-        # print(self.output_df)
+        return input_df, numeric_input_df, output_df
 
     def make_dist(self, data_df):
         m0 = data_df.merge(self.structures, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'], suffixes=('0', '0'))
@@ -157,6 +158,7 @@ class Model:
 
     def make_input(self, input_df):
         df = self.make_dist(input_df)
+        df['type'] = input_df['type']
 
         for t in self.coupling_types:
             df[f'coupling_{t}'] = (df.type == t).astype('int8')
@@ -252,23 +254,29 @@ class SKModel(Model):
 
         self.flatten_output = flatten_output
 
-    def fit(self, input_df, output_df):
-        #self.setup_data(input_df, output_df)
+    def fit(self, input_df, output_df, val_input_df=None, val_output_df=None):
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
-        ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
+        if val_input_df is not None and val_output_df is not None:
+            val_input_df, val_numeric_input_df, val_output_df = self.setup_data(val_input_df, val_output_df)
+            eval_set = (val_numeric_input_df, val_output_df)
+        else:
+            eval_set = None
+
+        ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         #self.model.fit(self.numeric_input_df.values, ref_output)
-        self.model.fit(self.numeric_input_df, self.output_df)
+        self.model.fit(numeric_input_df, output_df, eval_set=eval_set)
 
     def corr(self, input_df, output_df):
-        self.setup_data(input_df, output_df)
-        return self.input_df.corr()
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
+        return input_df.corr()
 
     def evaluate(self, input_df, output_df):
-        #self.setup_data(input_df, output_df)
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
-        ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
-        test_output = self.model.predict(self.numeric_input_df.values)
-        return test_output, score(output_df, ref_output, test_output)
+        ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
+        test_output = self.model.predict(numeric_input_df.values)
+        return test_output, score(input_df, ref_output, test_output)
 
     def predict(self, input_df):
         self.setup_data(input_df)
@@ -288,11 +296,13 @@ class LGBModel(SKModel):
         self.model = lgb.LGBMRegressor(**lightgbm_args)
 
     def plot_importance(self, ax=None, height=1):
-        print(ax)
         lgb.plot_importance(self.model, ax=ax, height=height)
 
     def plot_split_value_histogram(self, ax=None, height=1):
-        lgb.plot_split_value_histogram(self.model, ax=ax, height=height)
+        lgb.plot_split_value_histogram(self.model, ax=ax)
+
+    def plot_metric(self, ax=None, height=1):
+        lgb.plot_metric(self.model, ax=ax)
 
 class RFModel(SKModel):
     def __init__(self, model_args, rf_args={}):
