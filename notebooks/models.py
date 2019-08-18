@@ -101,8 +101,11 @@ class Model:
         return input_df, numeric_input_df, output_df
 
     def make_dist(self, data_df):
-        m0 = data_df.merge(self.structures, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'], suffixes=('0', '0'))
-        m1 = data_df.merge(self.structures, left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('1', '1'))
+        m0 = data_df.merge(self.structures, how='left', left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'], suffixes=('0', '0'))
+        m1 = data_df.merge(self.structures, how='left', left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('1', '1'))
+
+        m0.index = data_df.index
+        m1.index = data_df.index
 
         l0 = m0[['x', 'y', 'z']]
         l1 = m1[['x', 'y', 'z']]
@@ -113,9 +116,11 @@ class Model:
         dist.name = 'coupling_distance'
 
         dist.index = data_df.index
-        m0.atom.index = data_df.index
-        m1.atom.index = data_df.index
-        
+
+        # dist.index = data_df.index
+        # m0.atom.index = data_df.index
+        # m1.atom.index = data_df.index
+
         merged = data_df.join(dist)
         merged['atom_0'] = m0.atom
         merged['atom_1'] = m1.atom
@@ -129,7 +134,7 @@ class Model:
 
         df['ai'] = atom_index_column
 
-        m = df.merge(self.structures, left_on=['molecule_name', 'ai'], right_on=['molecule_name', 'atom_index'])
+        m = df.merge(self.structures, how='left', left_on=['molecule_name', 'ai'], right_on=['molecule_name', 'atom_index'])
         m.index = df.index
 
         mask = atom_sym_column == 'X'
@@ -235,7 +240,7 @@ class Model:
 
                             bond_info_cos[bi][i] = np.dot(dir0, dir1)
 
-                    
+                    i0 = i1
             except:
                 pass
 
@@ -245,10 +250,15 @@ class Model:
 
         for i in range(3):
             df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info_dist[i], index=df.index)
+            df[f'bond{i}{i + 1}_dist2']     = pd.Series(bond_info_dist[i] * bond_info_dist[i], index=df.index)
+
             df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info_valency[i], index=df.index)
             df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info_strength[i], index=df.index)
             df[f'bond{i}{i + 1}_force'] = pd.Series(bond_info_force[i], index=df.index)
+
             df[f'bond{i}{i + 1}_cos'] = pd.Series(bond_info_cos[i], index=df.index)
+            df[f'bond{i}{i + 1}_cos2'] = pd.Series(bond_info_cos[i] * bond_info_cos[i], index=df.index)
+            df[f'bond{i}{i + 1}_sin2'] = 1 - df[f'bond{i}{i + 1}_cos2']
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -270,7 +280,21 @@ class Model:
         df['atoms0N_dy'] = (df['atom0_y'] - df['atomN_y']).abs()
         df['atoms0N_dz'] = (df['atom0_z'] - df['atomN_z']).abs()
 
-        df['atoms0N_dist'] = (df['atoms0N_dx'] * df['atoms0N_dx'] + df['atoms0N_dy'] * df['atoms0N_dy'] + df['atoms0N_dz'] * df['atoms0N_dz']).apply(np.sqrt)
+        df['atoms0N_dist2'] = df['atoms0N_dx'] * df['atoms0N_dx'] + df['atoms0N_dy'] * df['atoms0N_dy'] + df['atoms0N_dz'] * df['atoms0N_dz']
+        df['atoms0N_dist'] = df['atoms0N_dist2'].apply(np.sqrt)
+
+        for i in range(4):
+            for j in range(4):
+                if i >= j:
+                    continue
+
+                prefix = f'atoms{i}{j}'                
+                df[f'{prefix}_dx'] = (df[f'atom0_x'] - df[f'atomN_x']).abs()
+                df[f'{prefix}_dy'] = (df[f'atom0_y'] - df[f'atomN_y']).abs()
+                df[f'{prefix}_dz'] = (df[f'atom0_z'] - df[f'atomN_z']).abs()
+
+                df[f'{prefix}_dist2'] = df[f'{prefix}_dx'] * df[f'{prefix}_dx'] + df[f'{prefix}_dy'] * df[f'{prefix}_dy'] + df[f'{prefix}_dz'] * df[f'{prefix}_dz']
+                df[f'{prefix}_dist'] = df[f'{prefix}_dist2'].apply(np.sqrt)
         
     def cleanup_columns(self, df):
         pass
@@ -405,7 +429,7 @@ class NNModel(Model):
         self.scalar_coupling_contributions_scaler.fit(self.scalar_coupling_contributions_output_df.values)
 
     def fit(self, input_df, output_df):
-        self.setup_data(input_df, output_df)
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
         self.setup_additional_output_data()
 
         self.model = self.create_model(self.numeric_input_df.values.shape[1])
