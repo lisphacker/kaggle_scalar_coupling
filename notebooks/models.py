@@ -41,9 +41,9 @@ def partition_data(data_df, count=None, train_frac=0.5, valid_frac=0.2):
     valid_indices = indices[n_train:max_valid]
     test_indices = indices[max_valid:]
     
-    train = data_df.iloc[train_indices, :]
-    valid = data_df.iloc[valid_indices, :]
-    test = data_df.iloc[test_indices, :]
+    train = data_df.iloc[train_indices, :].copy()
+    valid = data_df.iloc[valid_indices, :].copy()
+    test = data_df.iloc[test_indices, :].copy()
 
     return train, valid, test
 
@@ -174,7 +174,18 @@ class Model:
             atom_syms[i] = pd.Categorical(['X'] * n, categories=list(self.atom_types) + ['X'])
             atom_indices[i] = np.zeros(n, dtype='int16')
 
-        bond_info = np.zeros((9, n), dtype='float32')
+        #bond_info = np.zeros((9, n), dtype='float32')
+        bond_info_dist = []
+        bond_info_valency = []
+        bond_info_strength = []
+        bond_info_force = []
+        bond_info_cos = []
+        for i in range(3):
+            bond_info_dist.append(np.zeros(n, dtype='float32'))
+            bond_info_valency.append(np.zeros(n, dtype='float32'))
+            bond_info_strength.append(np.zeros(n, dtype='float32'))
+            bond_info_force.append(np.zeros(n, dtype='float32'))
+            bond_info_cos.append(np.zeros(n, dtype='float32'))
 
         for i, row in enumerate(input_df.itertuples()):
             m = self.molecules[row.molecule_name]
@@ -196,12 +207,35 @@ class Model:
                         print(f'Unable to resolve bond - path = {path}, bond = {(i0, i1)})')
                         i0 = i1
                         continue
-                    bi = ai * 3
-                    bond_info[bi, i]     = b.dist
-                    bond_info[bi + 1, i] = b.valency
-                    bond_info[bi + 2, i] = b.strength
+                    bi = ai
+                    # bond_info[bi, i]     = b.dist
+                    # bond_info[bi + 1, i] = b.valency
+                    # bond_info[bi + 2, i] = b.strength
+                    bond_info_dist[bi][i]     = b.dist
+                    bond_info_valency[bi][i] = b.valency
+                    bond_info_strength[bi][i] = b.strength
 
-                    i0 = i1
+                    p0 = m.positions[i0]
+                    p1 = m.positions[i1]
+                    d = np.linalg.norm(p0 - p1)
+                    a0 = chemistry.atomic_number[syms[i0]]
+                    a1 = chemistry.atomic_number[syms[i1]]
+                    f = a0 * a1 / (d * d)
+                    bond_info_force[bi][i] = f
+
+                    if ai < len(path) - 1:
+                        i2 = path[ai + 1]
+                        p2 = m.positions[i2]
+                        d0 = d
+                        d1 = np.linalg.norm(p2 - p1)
+
+                        if d0 != 0 and d1 != 0:
+                            dir0 = (p0 - p1) / d0
+                            dir1 = (p2 - p1) / d1
+
+                            bond_info_cos[bi][i] = np.dot(dir0, dir1)
+
+                    
             except:
                 pass
 
@@ -210,10 +244,11 @@ class Model:
         self.make_atom_columns(df, pd.Series(atom_syms[2], index=df.index), pd.Series(atom_indices[2], index=df.index), 'atom3')
 
         for i in range(3):
-            bi = i * 3
-            df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info[bi    , :], index=df.index)
-            df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info[bi + 1, :], index=df.index)
-            df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info[bi + 2, :], index=df.index)
+            df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info_dist[i], index=df.index)
+            df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info_valency[i], index=df.index)
+            df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info_strength[i], index=df.index)
+            df[f'bond{i}{i + 1}_force'] = pd.Series(bond_info_force[i], index=df.index)
+            df[f'bond{i}{i + 1}_cos'] = pd.Series(bond_info_cos[i], index=df.index)
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -265,7 +300,7 @@ class SKModel(Model):
 
         ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         #self.model.fit(self.numeric_input_df.values, ref_output)
-        self.model.fit(numeric_input_df, output_df, eval_set=eval_set)
+        self.model.fit(numeric_input_df, output_df, eval_set=eval_set, verbose=False)
 
     def corr(self, input_df, output_df):
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
