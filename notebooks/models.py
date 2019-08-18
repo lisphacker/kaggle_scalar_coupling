@@ -222,16 +222,19 @@ class Model:
         return df
 
     def make_complex_inputs(self, df):
-        return
         for atomId in "0N":
             prefix = f'atom{atomId}'
             for axis in "xyz":
                 df[f'{prefix}_dir_{axis}'] = (df[f'{prefix}_{axis}'] - df[f'{prefix}_{axis}_mean']) / df[f'{prefix}_dist_to_mean']
 
         df['cos0N'] = df['atom0_dir_x'] * df['atomN_dir_x'] + df['atom0_dir_y'] * df['atomN_dir_y'] + df['atom0_dir_z'] * df['atomN_dir_z']
-        
-        pprint(list(df.columns))
 
+        df['atoms0N_dx'] = (df['atom0_x'] - df['atomN_x']).abs()
+        df['atoms0N_dy'] = (df['atom0_y'] - df['atomN_y']).abs()
+        df['atoms0N_dz'] = (df['atom0_z'] - df['atomN_z']).abs()
+
+        df['atoms0N_dist'] = (df['atoms0N_dx'] * df['atoms0N_dx'] + df['atoms0N_dy'] * df['atoms0N_dy'] + df['atoms0N_dz'] * df['atoms0N_dz']).apply(np.sqrt)
+        
     def cleanup_columns(self, df):
         pass
 
@@ -250,17 +253,18 @@ class SKModel(Model):
         self.flatten_output = flatten_output
 
     def fit(self, input_df, output_df):
-        self.setup_data(input_df, output_df)
+        #self.setup_data(input_df, output_df)
 
         ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
-        self.model.fit(self.numeric_input_df.values, ref_output)
+        #self.model.fit(self.numeric_input_df.values, ref_output)
+        self.model.fit(self.numeric_input_df, self.output_df)
 
     def corr(self, input_df, output_df):
         self.setup_data(input_df, output_df)
         return self.input_df.corr()
 
     def evaluate(self, input_df, output_df):
-        self.setup_data(input_df, output_df)
+        #self.setup_data(input_df, output_df)
 
         ref_output = self.output_df.values.flatten() if self.flatten_output else self.output_df.values.reshape((len(self.output_df), 1))
         test_output = self.model.predict(self.numeric_input_df.values)
@@ -282,6 +286,13 @@ class LGBModel(SKModel):
         SKModel.__init__(self, **model_args)
 
         self.model = lgb.LGBMRegressor(**lightgbm_args)
+
+    def plot_importance(self, ax=None, height=1):
+        print(ax)
+        lgb.plot_importance(self.model, ax=ax, height=height)
+
+    def plot_split_value_histogram(self, ax=None, height=1):
+        lgb.plot_split_value_histogram(self.model, ax=ax, height=height)
 
 class RFModel(SKModel):
     def __init__(self, model_args, rf_args={}):
@@ -375,7 +386,9 @@ class NNModel(Model):
         history = self.model.fit(
             i, 
             [o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions], 
-            epochs=self.epochs, batch_size=self.batch_size, callbacks=callbacks, validation_split=self.validation_split, verbose=1)
+            epochs=self.epochs, batch_size=self.batch_size, callbacks=callbacks, 
+            validation_split=self.validation_split,
+            shuffle=False, verbose=1)
 
         return history
 
@@ -408,23 +421,28 @@ class NNModel(Model):
         i = Input(shape=(num_inputs,))
 
         l = i
-        for j, n in enumerate([4096] * 6):
-            l = self.create_complex_layer(l, n, name=f'1024x15_{j}')
+        for j, n in enumerate([1024] * 5):
+            l = self.create_complex_layer(l, n, name=f'common_{j}')
 
         l_dipole_moments = l
         l_magnetic_shielding_tensors = l
         l_mulliken_charges = l
         l_potential_energy = l
-        l_scalar_coupling_contributions = l
        
-        for j, n in enumerate([1024] * 1):
+        for j, n in enumerate([1024] * 5):
             l_dipole_moments = self.create_complex_layer(l_dipole_moments, n, name=f'dipole_moments_{j}')
             l_magnetic_shielding_tensors = self.create_complex_layer(l_magnetic_shielding_tensors, n, name=f'magnetic_shielding_tensors_{j}')
             l_mulliken_charges = self.create_complex_layer(l_mulliken_charges, n, name=f'mulliken_charges_{j}')
             l_potential_energy = self.create_complex_layer(l_potential_energy, n, name=f'potential_energy_{j}')
-            l_scalar_coupling_contributions = self.create_complex_layer(l_scalar_coupling_contributions, n, name=f'scalar_coupling_contributions_{j}')
 
-            l = self.create_complex_layer(l, n, name=f'output_{j}')
+        for j, n in enumerate([1024] * 5):
+            l = self.create_complex_layer(l, n, name=f'scc_1_{j}')
+
+        l_scalar_coupling_contributions = l
+
+        for j, n in enumerate([1024] * 1):
+            l = self.create_complex_layer(l, n, name=f'scc_2_{j}')
+            l_scalar_coupling_contributions = self.create_complex_layer(l_scalar_coupling_contributions, n, name=f'scalar_coupling_contributions_{j}')
 
         o_dipole_moments = Dense(len(self.dipole_moments_output_df.columns), activation='linear', name='output_dipole_moments')(l_dipole_moments)
         o_magnetic_shielding_tensors = Dense(len(self.magnetic_shielding_tensors_output_df.columns), activation='linear', name='output_magnetic_shielding_tensors')(l_magnetic_shielding_tensors)
@@ -432,7 +450,7 @@ class NNModel(Model):
         o_potential_energy = Dense(len(self.potential_energy_output_df.columns), activation='linear', name='output_potential_energy')(l_potential_energy)
         o_scalar_coupling_contributions = Dense(len(self.scalar_coupling_contributions_output_df.columns), activation='linear', name='output_scalar_coupling_contributions')(l_scalar_coupling_contributions)
 
-        o = Dense(1, activation='linear', name='merged')(l)
+        o = Dense(1, activation='linear', name='scc')(l)
 
         model = KerasModel(inputs=[i], outputs=[o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions])
 
@@ -460,11 +478,14 @@ class NNModel(Model):
         return model
 
     def create_complex_layer(self, l, n, name=''):
+        # l = Dense(n, kernel_initializer='normal', name=f'{name}_dense')(l)
+        # l = BatchNormalization(name=f'{name}_batch_norm')(l)
+        # l = LeakyReLU(alpha=0.05, name=f'{name}_leaky_relu')(l)
+        # l = Dropout(0.2, name=f'{name}_dropout')(l)
+
         l = Dense(n, kernel_initializer='normal', name=f'{name}_dense')(l)
+        l = LeakyReLU(alpha=0, name=f'{name}_leaky_relu')(l)
         l = BatchNormalization(name=f'{name}_batch_norm')(l)
-        # l = LeakyReLU(alpha=0.2)(l)
-        # l = Dropout(0.1)(l)
-        l = LeakyReLU(alpha=0.05, name=f'{name}_leaky_relu')(l)
-        l = Dropout(0.2, name=f'{name}_dropout')(l)
+        l = Dropout(0.25, name=f'{name}_dropout')(l)
         return l
 
