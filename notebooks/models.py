@@ -97,6 +97,8 @@ class Model:
         
         if output_df is not None:   
             output_df = self.make_output(output_df)
+        else:
+            output_df = None
 
         return input_df, numeric_input_df, output_df
 
@@ -284,14 +286,11 @@ class Model:
         df['atoms0N_dist'] = df['atoms0N_dist2'].apply(np.sqrt)
 
         for i in range(4):
-            for j in range(4):
-                if i >= j:
-                    continue
-
+            for j in range(i + 1, 4):
                 prefix = f'atoms{i}{j}'                
-                df[f'{prefix}_dx'] = (df[f'atom0_x'] - df[f'atomN_x']).abs()
-                df[f'{prefix}_dy'] = (df[f'atom0_y'] - df[f'atomN_y']).abs()
-                df[f'{prefix}_dz'] = (df[f'atom0_z'] - df[f'atomN_z']).abs()
+                df[f'{prefix}_dx'] = (df[f'atom{i}_x'] - df[f'atom{j}_x']).abs()
+                df[f'{prefix}_dy'] = (df[f'atom{i}_y'] - df[f'atom{j}_y']).abs()
+                df[f'{prefix}_dz'] = (df[f'atom{i}_z'] - df[f'atom{j}_z']).abs()
 
                 df[f'{prefix}_dist2'] = df[f'{prefix}_dx'] * df[f'{prefix}_dx'] + df[f'{prefix}_dy'] * df[f'{prefix}_dy'] + df[f'{prefix}_dz'] * df[f'{prefix}_dz']
                 df[f'{prefix}_dist'] = df[f'{prefix}_dist2'].apply(np.sqrt)
@@ -302,10 +301,10 @@ class Model:
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
 
-    def fit_scalers(self):
-        self.input_scaler.fit(self.numeric_input_df.values)
-        if self.output_df is not None:
-            self.output_scaler.fit(self.output_df.values)
+    def fit_scalers(self, numeric_input_df, output_df):
+        self.input_scaler.fit(numeric_input_df.values)
+        if output_df is not None:
+            self.output_scaler.fit(output_df.values)
 
 class SKModel(Model):
     def __init__(self, flatten_output=True, **model_args):
@@ -314,6 +313,7 @@ class SKModel(Model):
         self.flatten_output = flatten_output
 
     def fit(self, input_df, output_df, val_input_df=None, val_output_df=None):
+        print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
         if val_input_df is not None and val_output_df is not None:
@@ -322,25 +322,36 @@ class SKModel(Model):
         else:
             eval_set = None
 
+        print('  Fitting model')
         ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         #self.model.fit(self.numeric_input_df.values, ref_output)
         self.model.fit(numeric_input_df, output_df, eval_set=eval_set, verbose=False)
+
+        self.last_input_df = input_df
+        self.last_numeric_input_df = numeric_input_df
+        self.last_output_df = output_df
 
     def corr(self, input_df, output_df):
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
         return input_df.corr()
 
     def evaluate(self, input_df, output_df):
+        print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
+        print('  Fitting model')
         ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         test_output = self.model.predict(numeric_input_df.values)
+
+        print('  Evaluating model')
         return test_output, score(input_df, ref_output, test_output)
 
     def predict(self, input_df):
-        self.setup_data(input_df)
+        print('  Setting up data')
+        input_df, numeric_input_df, output_df = self.setup_data(input_df)
 
-        return self.model.predict(self.numeric_input_df.values)
+        print('  Predicting')
+        return self.model.predict(numeric_input_df.values)
 
 # class XGBModel(SKModel):
 #     def __init__(self, model_args, xgb_args={}):
@@ -397,30 +408,30 @@ class NNModel(Model):
             self.potential_energy_scaler = self.scaler()
             self.scalar_coupling_contributions_scaler = self.scaler()
 
-    def setup_additional_output_data(self):
-        self.dipole_moments_output_df = self.input_df[['molecule_name']].merge(self.dipole_moments, left_on='molecule_name', right_on='molecule_name')
+    def setup_additional_output_data(self, input_df):
+        self.dipole_moments_output_df = input_df[['molecule_name']].merge(self.dipole_moments, left_on='molecule_name', right_on='molecule_name')
         self.dipole_moments_output_df.drop(columns=['molecule_name'], inplace=True)
 
-        self.magnetic_shielding_tensors_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+        self.magnetic_shielding_tensors_output_df = input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
             .merge(self.magnetic_shielding_tensors, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'])\
             .merge(self.magnetic_shielding_tensors, left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('_0', '_1'))
         self.magnetic_shielding_tensors_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1'], inplace=True)
 
-        self.mulliken_charges_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+        self.mulliken_charges_output_df = input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
             .merge(self.mulliken_charges, left_on=['molecule_name', 'atom_index_0'], right_on=['molecule_name', 'atom_index'])\
             .merge(self.mulliken_charges, left_on=['molecule_name', 'atom_index_1'], right_on=['molecule_name', 'atom_index'], suffixes=('_0', '_1'))
         self.mulliken_charges_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1'], inplace=True)
         
-        self.potential_energy_output_df = self.input_df[['molecule_name']].merge(self.potential_energy, left_on='molecule_name', right_on='molecule_name')
+        self.potential_energy_output_df = input_df[['molecule_name']].merge(self.potential_energy, left_on='molecule_name', right_on='molecule_name')
         self.potential_energy_output_df.drop(columns=['molecule_name'], inplace=True)
         
-        self.scalar_coupling_contributions_output_df = self.input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
+        self.scalar_coupling_contributions_output_df = input_df[['molecule_name', 'atom_index_0', 'atom_index_1']]\
             .merge(self.scalar_coupling_contributions, left_on=['molecule_name', 'atom_index_0', 'atom_index_1'], right_on=['molecule_name', 'atom_index_0', 'atom_index_1'])
         self.scalar_coupling_contributions_output_df.drop(columns=['molecule_name', 'atom_index_0', 'atom_index_1', 'type'], inplace=True)
 
 
-    def fit_scalers(self):
-        Model.fit_scalers(self)
+    def fit_scalers(self, numeric_input_df, output_df):
+        Model.fit_scalers(self, numeric_input_df, output_df)
 
         self.dipole_moments_scaler.fit(self.dipole_moments_output_df.values)
         self.magnetic_shielding_tensors_scaler.fit(self.magnetic_shielding_tensors_output_df.values)
@@ -430,14 +441,14 @@ class NNModel(Model):
 
     def fit(self, input_df, output_df):
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
-        self.setup_additional_output_data()
+        self.setup_additional_output_data(input_df)
 
-        self.model = self.create_model(self.numeric_input_df.values.shape[1])
+        self.model = self.create_model(numeric_input_df.values.shape[1])
 
-        self.fit_scalers()
+        self.fit_scalers(numeric_input_df, output_df)
 
-        i = self.input_scaler.transform(self.numeric_input_df.values)
-        o = self.output_scaler.transform(self.output_df.values)
+        i = self.input_scaler.transform(numeric_input_df.values)
+        o = self.output_scaler.transform(output_df.values)
 
 
         o_dipole_moments = self.dipole_moments_scaler.transform(self.dipole_moments_output_df.values)
@@ -468,20 +479,21 @@ class NNModel(Model):
         return self.input_df.corr()
 
     def evaluate(self, input_df, output_df):
-        self.setup_data(input_df, output_df)
-        self.setup_additional_output_data()
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
+        self.setup_additional_output_data(input_df)
 
-        i = self.input_scaler.transform(self.numeric_input_df.values)
-        ref_output = self.output_df.values
+        i = self.input_scaler.transform(numeric_input_df.values)
+        ref_output = output_df.values
         o = self.model.predict(i)
         test_output = self.output_scaler.inverse_transform(o[0])
 
-        return test_output, score(output_df, ref_output, test_output)
+        return test_output, score(input_df, ref_output, test_output)
 
     def predict(self, input_df):
-        self.setup_data(input_df)
+        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
+        self.setup_additional_output_data(input_df)
 
-        i = self.input_scaler.transform(self.numeric_input_df.values)
+        i = self.input_scaler.transform(numeric_input_df.values)
         o = self.model.predict(i)
         return self.output_scaler.inverse_transform(o[0])
 
