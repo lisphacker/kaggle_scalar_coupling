@@ -175,6 +175,9 @@ class Model:
 
         n = len(input_df)
 
+        cc_type = input_df.type.iloc[0]
+        n_bonds = int(cc_type[0])
+
         atom_syms = [None] * 3
         atom_indices = [None] * 3
         for i in range(3):
@@ -200,6 +203,9 @@ class Model:
 
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
+
+            if len(path) != n_bonds + 1:
+                print(path, row.atom_index_0, row.atom_index_1, '\n', m.molecule_name)
 
             try:
                 i0 = path[0]
@@ -246,21 +252,23 @@ class Model:
             except:
                 pass
 
-        self.make_atom_columns(df, pd.Series(atom_syms[0], index=df.index), pd.Series(atom_indices[0], index=df.index), 'atom1')
-        self.make_atom_columns(df, pd.Series(atom_syms[1], index=df.index), pd.Series(atom_indices[1], index=df.index), 'atom2')
-        self.make_atom_columns(df, pd.Series(atom_syms[2], index=df.index), pd.Series(atom_indices[2], index=df.index), 'atom3')
+       
+        for i in range(1, n_bonds + 1):
+            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[0], index=df.index), f'atom{i}')
+            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[1], index=df.index), f'atom{i}')
+            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[2], index=df.index), f'atom{i}')
 
-        for i in range(3):
+        for i in range(n_bonds):
             df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info_dist[i], index=df.index)
-            df[f'bond{i}{i + 1}_dist2']     = pd.Series(bond_info_dist[i] * bond_info_dist[i], index=df.index)
+            df[f'bond{i}{i + 1}_dist2']    = pd.Series(bond_info_dist[i] * bond_info_dist[i], index=df.index)
 
             df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info_valency[i], index=df.index)
             df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info_strength[i], index=df.index)
-            df[f'bond{i}{i + 1}_force'] = pd.Series(bond_info_force[i], index=df.index)
+            df[f'bond{i}{i + 1}_force']    = pd.Series(bond_info_force[i], index=df.index)
 
-            df[f'bond{i}{i + 1}_cos'] = pd.Series(bond_info_cos[i], index=df.index)
-            df[f'bond{i}{i + 1}_cos2'] = pd.Series(bond_info_cos[i] * bond_info_cos[i], index=df.index)
-            df[f'bond{i}{i + 1}_sin2'] = 1 - df[f'bond{i}{i + 1}_cos2']
+            df[f'bond{i}{i + 1}_cos']      = pd.Series(bond_info_cos[i], index=df.index)
+            df[f'bond{i}{i + 1}_cos2']     = pd.Series(bond_info_cos[i] * bond_info_cos[i], index=df.index)
+            df[f'bond{i}{i + 1}_sin2']     = 1 - df[f'bond{i}{i + 1}_cos2']
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -285,8 +293,11 @@ class Model:
         df['atoms0N_dist2'] = df['atoms0N_dx'] * df['atoms0N_dx'] + df['atoms0N_dy'] * df['atoms0N_dy'] + df['atoms0N_dz'] * df['atoms0N_dz']
         df['atoms0N_dist'] = df['atoms0N_dist2'].apply(np.sqrt)
 
-        for i in range(4):
-            for j in range(i + 1, 4):
+        cc_type = df.type.iloc[0]
+        n_atoms = int(cc_type[0]) + 1
+
+        for i in range(n_atoms):
+            for j in range(i + 1, n_atoms):
                 prefix = f'atoms{i}{j}'                
                 df[f'{prefix}_dx'] = (df[f'atom{i}_x'] - df[f'atom{j}_x']).abs()
                 df[f'{prefix}_dy'] = (df[f'atom{i}_y'] - df[f'atom{j}_y']).abs()
@@ -296,7 +307,15 @@ class Model:
                 df[f'{prefix}_dist'] = df[f'{prefix}_dist2'].apply(np.sqrt)
         
     def cleanup_columns(self, df):
-        pass
+        columns = list(df.columns)
+        to_drop = []
+        for column in columns:
+            for axis in 'xyz':
+                if column.startswith('atom') and column.endswith(f'_{axis}'):
+                    to_drop.append(column)
+
+                if column.startswith('atom') and column.endswith(f'_{axis}_mean'):
+                    to_drop.append(column)
 
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
