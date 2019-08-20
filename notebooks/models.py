@@ -19,6 +19,8 @@ import chemistry
 
 from pprint import pprint
 
+float32 = np.float32
+
 class DummyScaler:
     def fit(self, X):
         return X
@@ -129,7 +131,9 @@ class Model:
 
         return merged
 
-    def make_atom_columns(self, df, atom_sym_column, atom_index_column, prefix):
+    def make_atom_columns(self, df, atom_syms, atom_index_column, prefix):
+        atom_sym_column = pd.Categorical(atom_syms, categories=list(self.atom_types) + ['X'])
+
         for a in self.atom_types:
             df[f'{prefix}_{a}'] = (atom_sym_column == a).astype('int8')
         df[f'{prefix}_weight'] = pd.Series([chemistry.atom_size[atom] for atom in atom_sym_column], index=df.index, dtype='int8')
@@ -177,86 +181,99 @@ class Model:
 
         cc_type = input_df.type.iloc[0]
         n_bonds = int(cc_type[0])
+        n_atoms = n_bonds + 1
 
         atom_syms = [None] * 3
         atom_indices = [None] * 3
         for i in range(3):
-            atom_syms[i] = pd.Categorical(['X'] * n, categories=list(self.atom_types) + ['X'])
+            #atom_syms[i] = pd.Categorical(['X'] * n, categories=list(self.atom_types) + ['X'])
+            atom_syms[i] = ['X'] * n
             atom_indices[i] = np.zeros(n, dtype='int16')
+
+        sergii_dist = np.zeros((n, 4), dtype='float32')
 
         #bond_info = np.zeros((9, n), dtype='float32')
         bond_info_dist = []
         bond_info_valency = []
         bond_info_strength = []
         bond_info_force = []
+        bond_info_force2 = []
         bond_info_cos = []
         for i in range(3):
             bond_info_dist.append(np.zeros(n, dtype='float32'))
             bond_info_valency.append(np.zeros(n, dtype='float32'))
             bond_info_strength.append(np.zeros(n, dtype='float32'))
             bond_info_force.append(np.zeros(n, dtype='float32'))
+            bond_info_force2.append(np.zeros(n, dtype='float32'))
             bond_info_cos.append(np.zeros(n, dtype='float32'))
 
         for i, row in enumerate(input_df.itertuples()):
             m = self.molecules[row.molecule_name]
             bonds = m.bonds
 
+            d = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1)
+            sergii_dist[i, :] = d
+
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
 
             if len(path) != n_bonds + 1:
-                print(path, row.atom_index_0, row.atom_index_1, '\n', m.molecule_name)
+                print(path, row.atom_index_0, row.atom_index_1, '\n', m.name)
+                continue
 
-            try:
-                i0 = path[0]
-                for ai, (i1, sym) in enumerate(zip(path[1:], syms[1:])):
-                    atom_syms[ai][i] = sym
-                    atom_indices[ai][i] = i1
+            i0 = path[0]
+            s0 = syms[0]
+            for ai, (i1, s1) in enumerate(zip(path[1:], syms[1:])):
+                atom_syms[ai][i] = s1
+                atom_indices[ai][i] = i1
 
-                    b = bonds.get((i0, i1), None)
-                    if b is None:
-                        b = bonds.get((i1, i0), None)
-                    if b is None:
-                        print(f'Unable to resolve bond - path = {path}, bond = {(i0, i1)})')
-                        i0 = i1
-                        continue
-                    bi = ai
-                    # bond_info[bi, i]     = b.dist
-                    # bond_info[bi + 1, i] = b.valency
-                    # bond_info[bi + 2, i] = b.strength
-                    bond_info_dist[bi][i]     = b.dist
-                    bond_info_valency[bi][i] = b.valency
-                    bond_info_strength[bi][i] = b.strength
-
-                    p0 = m.positions[i0]
-                    p1 = m.positions[i1]
-                    d = np.linalg.norm(p0 - p1)
-                    a0 = chemistry.atomic_number[syms[i0]]
-                    a1 = chemistry.atomic_number[syms[i1]]
-                    f = a0 * a1 / (d * d)
-                    bond_info_force[bi][i] = f
-
-                    if ai < len(path) - 1:
-                        i2 = path[ai + 1]
-                        p2 = m.positions[i2]
-                        d0 = d
-                        d1 = np.linalg.norm(p2 - p1)
-
-                        if d0 != 0 and d1 != 0:
-                            dir0 = (p0 - p1) / d0
-                            dir1 = (p2 - p1) / d1
-
-                            bond_info_cos[bi][i] = np.dot(dir0, dir1)
-
+                # Bond properties
+                b = bonds.get((i0, i1), None)
+                if b is None:
+                    b = bonds.get((i1, i0), None)
+                if b is None:
+                    print(f'Unable to resolve bond - path = {path}, bond = {(i0, i1)})')
                     i0 = i1
-            except:
-                pass
+                    continue
+                bi = ai
+                # bond_info[bi, i]     = b.dist
+                # bond_info[bi + 1, i] = b.valency
+                # bond_info[bi + 2, i] = b.strength
+                bond_info_dist[bi][i]     = b.dist
+                bond_info_valency[bi][i] = b.valency
+                bond_info_strength[bi][i] = b.strength
+
+                # Compute bond force
+                p0 = m.positions[i0]
+                p1 = m.positions[i1]
+                d = np.linalg.norm(p0 - p1)
+
+                a0 = chemistry.atomic_number[s0]
+                a1 = chemistry.atomic_number[s1]
+
+                bond_info_force2[bi][i] = a0 * a1 / d
+                bond_info_force[bi][i] = bond_info_force2[bi][i] / d
+
+                if ai < len(path) - 1:
+                    i2 = path[ai + 1]
+                    p2 = m.positions[i2]
+                    d0 = d
+                    d1 = np.linalg.norm(p2 - p1)
+
+                    if d0 != 0 and d1 != 0:
+                        dir0 = (p0 - p1) / d0
+                        dir1 = (p2 - p1) / d1
+
+                        bond_info_cos[bi][i] = np.dot(dir0, dir1)
+
+
+                # Next pair
+                i0 = i1
+                s0 = s1
 
        
-        for i in range(1, n_bonds + 1):
-            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[0], index=df.index), f'atom{i}')
-            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[1], index=df.index), f'atom{i}')
-            self.make_atom_columns(df, pd.Series(atom_syms[i], index=df.index), pd.Series(atom_indices[2], index=df.index), f'atom{i}')
+        for i in range(1, n_atoms):
+            self.make_atom_columns(df, pd.Series(atom_syms[i - 1], index=df.index), pd.Series(atom_indices[i - 1], index=df.index), f'atom{i}')
 
         for i in range(n_bonds):
             df[f'bond{i}{i + 1}_dist']     = pd.Series(bond_info_dist[i], index=df.index)
@@ -265,10 +282,14 @@ class Model:
             df[f'bond{i}{i + 1}_valency']  = pd.Series(bond_info_valency[i], index=df.index)
             df[f'bond{i}{i + 1}_strength'] = pd.Series(bond_info_strength[i], index=df.index)
             df[f'bond{i}{i + 1}_force']    = pd.Series(bond_info_force[i], index=df.index)
+            df[f'bond{i}{i + 1}_force2']    = pd.Series(bond_info_force2[i], index=df.index)
 
             df[f'bond{i}{i + 1}_cos']      = pd.Series(bond_info_cos[i], index=df.index)
             df[f'bond{i}{i + 1}_cos2']     = pd.Series(bond_info_cos[i] * bond_info_cos[i], index=df.index)
             df[f'bond{i}{i + 1}_sin2']     = 1 - df[f'bond{i}{i + 1}_cos2']
+
+        for i in range(4):
+            df[f'sergii_dist_{i}'] = pd.Series(sergii_dist[:, i], index=df.index)
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -277,6 +298,41 @@ class Model:
         # df = df.merge(self.structures[cols].groupby('molecule_name').nth(0), how='left', left_on=['molecule_name'], right_on=['molecule_name'])
 
         return df
+
+    def compute_sergii_dist(self, m, i0, i1):        
+        # Sergii's 4 point method
+        p0, p1 = m.positions[i0], m.positions[i1]
+        mid = (p0 + p1) * 0.5
+
+        diff = m.positions - mid
+        dist = np.linalg.norm(diff, axis=1)
+        closest_indices = list(dist.argsort())
+
+        closest_indices.remove(i0)
+        closest_indices.remove(i1)
+
+        i2 = closest_indices[0]
+        p2 = m.positions[i2]
+        if len(closest_indices) > 1:
+            i3 = closest_indices[1]
+            p3 = m.positions[i3]
+            mid = (p0 + p1 + p2 + p3) / 4
+        else:
+            mid = (p0 + p1 + p2) / 3
+
+        d0 = np.linalg.norm(p0 - mid)
+        d1 = np.linalg.norm(p1 - mid)
+        d2 = np.linalg.norm(p2 - mid)
+
+        if len(closest_indices) > 1:
+            d3 = np.linalg.norm(p3 - mid)
+        else:
+            d3 = np.float32(0)
+
+        return sorted([d0, d1, d2, d3])
+        
+
+
 
     def make_complex_inputs(self, df):
         for atomId in "0N":
