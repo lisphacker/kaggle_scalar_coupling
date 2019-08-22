@@ -54,7 +54,7 @@ class MM11Scaler(MinMaxScaler):
         MinMaxScaler.__init__(self, feature_range=(-1, 1))
 
 class Model:
-    def __init__(self, molecules, structures, normalize_input=False):
+    def __init__(self, molecules, structures, normalize_input=False, verbose=False):
         if molecules is None:
             raise Exception('molecules cannot be None')
 
@@ -74,6 +74,8 @@ class Model:
             self.scaler = RobustScaler
             self.input_scaler = self.scaler()
             self.output_scaler = self.scaler()
+
+        self.verbose = verbose
 
     def setup_data(self, input_df, output_df=None):
         self.coupling_types = set(input_df.type.unique())
@@ -254,18 +256,17 @@ class Model:
                 bond_info_force2[bi][i] = a0 * a1 / d
                 bond_info_force[bi][i] = bond_info_force2[bi][i] / d
 
-                if ai < len(path) - 1:
-                    i2 = path[ai + 1]
+                if ai < len(path) - 2:
+                    i2 = path[ai + 2]
                     p2 = m.positions[i2]
                     d0 = d
                     d1 = np.linalg.norm(p2 - p1)
-
+                    
                     if d0 != 0 and d1 != 0:
                         dir0 = (p0 - p1) / d0
                         dir1 = (p2 - p1) / d1
 
                         bond_info_cos[bi][i] = np.dot(dir0, dir1)
-
 
                 # Next pair
                 i0 = i1
@@ -373,6 +374,11 @@ class Model:
                 if column.startswith('atom') and column.endswith(f'_{axis}_mean'):
                     to_drop.append(column)
 
+                if column.find('_dir_') >= 0:
+                    to_drop.append(column)
+
+        df.drop(columns=to_drop, inplace=True)
+
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
 
@@ -382,13 +388,16 @@ class Model:
             self.output_scaler.fit(output_df.values)
 
 class SKModel(Model):
-    def __init__(self, flatten_output=True, **model_args):
+    def __init__(self, model_args, fit_args, flatten_output=True):
         Model.__init__(self, **model_args)
+
+        self.fit_args = fit_args
 
         self.flatten_output = flatten_output
 
     def fit(self, input_df, output_df, val_input_df=None, val_output_df=None):
-        print('  Setting up data')
+        if self.verbose:
+            print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
         if val_input_df is not None and val_output_df is not None:
@@ -397,10 +406,11 @@ class SKModel(Model):
         else:
             eval_set = None
 
-        print('  Fitting model')
+        if self.verbose:
+            print('  Fitting model')
         ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         #self.model.fit(self.numeric_input_df.values, ref_output)
-        self.model.fit(numeric_input_df, output_df, eval_set=eval_set, verbose=False)
+        self.model.fit(numeric_input_df, output_df, eval_set=eval_set, **self.fit_args)
 
         self.last_input_df = input_df
         self.last_numeric_input_df = numeric_input_df
@@ -411,21 +421,26 @@ class SKModel(Model):
         return input_df.corr()
 
     def evaluate(self, input_df, output_df):
-        print('  Setting up data')
+        if self.verbose:
+            print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
 
-        print('  Fitting model')
+        if self.verbose:
+            print('  Fitting model')
         ref_output = output_df.values.flatten() if self.flatten_output else output_df.values.reshape((len(output_df), 1))
         test_output = self.model.predict(numeric_input_df.values)
 
-        print('  Evaluating model')
+        if self.verbose:
+            print('  Evaluating model')
         return test_output, score(input_df, ref_output, test_output)
 
     def predict(self, input_df):
-        print('  Setting up data')
+        if self.verbose:
+            print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df)
 
-        print('  Predicting')
+        if self.verbose:
+            print('  Predicting')
         return self.model.predict(numeric_input_df.values)
 
 # class XGBModel(SKModel):
@@ -435,10 +450,10 @@ class SKModel(Model):
 #         self.model = xgb.XGBRegressor(**xgb_args)
 
 class LGBModel(SKModel):
-    def __init__(self, model_args, lightgbm_args={}):
-        SKModel.__init__(self, **model_args)
+    def __init__(self, model_args, lightgbm_model_args={}, lightgbm_fit_args={}):
+        SKModel.__init__(self, model_args, lightgbm_fit_args)
 
-        self.model = lgb.LGBMRegressor(**lightgbm_args)
+        self.model = lgb.LGBMRegressor(**lightgbm_model_args)
 
     def plot_importance(self, ax=None, height=1):
         lgb.plot_importance(self.model, ax=ax, height=height)
@@ -515,11 +530,14 @@ class NNModel(Model):
         self.scalar_coupling_contributions_scaler.fit(self.scalar_coupling_contributions_output_df.values)
 
     def fit(self, input_df, output_df):
+        print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
         self.setup_additional_output_data(input_df)
 
+        print('  Creating model')
         self.model = self.create_model(numeric_input_df.values.shape[1])
 
+        print('  Fitting model')
         self.fit_scalers(numeric_input_df, output_df)
 
         i = self.input_scaler.transform(numeric_input_df.values)
@@ -540,7 +558,8 @@ class NNModel(Model):
 
         history = self.model.fit(
             i, 
-            [o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions], 
+            #[o, o_dipole_moments, o_magnetic_shielding_tensors, o_mulliken_charges, o_potential_energy, o_scalar_coupling_contributions], 
+            [o],
             epochs=self.epochs, batch_size=self.batch_size, callbacks=callbacks, 
             validation_split=self.validation_split,
             shuffle=False, verbose=1)
@@ -554,26 +573,30 @@ class NNModel(Model):
         return self.input_df.corr()
 
     def evaluate(self, input_df, output_df):
+        print('  Setting up data')
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
         self.setup_additional_output_data(input_df)
 
+        print('  Fitting model')
         i = self.input_scaler.transform(numeric_input_df.values)
         ref_output = output_df.values
         o = self.model.predict(i)
-        test_output = self.output_scaler.inverse_transform(o[0])
+        test_output = self.output_scaler.inverse_transform(o)
 
+        print('  Evaluating model')
         return test_output, score(input_df, ref_output, test_output)
 
     def predict(self, input_df):
-        input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
+        print('  Setting up data')
+        input_df, numeric_input_df, _ = self.setup_data(input_df)
         self.setup_additional_output_data(input_df)
 
+        print('  Predicting')
         i = self.input_scaler.transform(numeric_input_df.values)
         o = self.model.predict(i)
-        return self.output_scaler.inverse_transform(o[0])
+        return self.output_scaler.inverse_transform(o)
 
-    def create_model(self, num_inputs):
-        # 0.56 for 1JHC
+    def create_model_x(self, num_inputs):
         i = Input(shape=(num_inputs,))
 
         l = i
@@ -616,7 +639,7 @@ class NNModel(Model):
 
         return model
 
-    def create_model_best(self, num_inputs):
+    def create_model(self, num_inputs):
         # 0.56 for 1JHC
         i = l = Input(shape=(num_inputs,))
 
@@ -624,7 +647,7 @@ class NNModel(Model):
             l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
             n >>= 1
 
-        o = Dense(1, activation='linear')(l)
+        o = Dense(1, activation='linear', name='scc')(l)
 
         model = KerasModel(inputs=[i], outputs=[o])
         model.compile(optimizer=Adam(), loss='mae')
