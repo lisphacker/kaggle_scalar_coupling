@@ -192,7 +192,10 @@ class Model:
             atom_syms[i] = ['X'] * n
             atom_indices[i] = np.zeros(n, dtype='int16')
 
-        sergii_dist = np.zeros((n, 4), dtype='float32')
+        sergii_dist = np.zeros((4, n), dtype='float32')
+
+        n_non_sergii_atoms = 8
+        sergii_dist2 = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
 
         #bond_info = np.zeros((9, n), dtype='float32')
         bond_info_dist = []
@@ -213,8 +216,9 @@ class Model:
             m = self.molecules[row.molecule_name]
             bonds = m.bonds
 
-            d = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1)
-            sergii_dist[i, :] = d
+            d, d2 = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1, n_non_sergii_atoms)
+            sergii_dist[:, i] = d
+            sergii_dist2[:, :, i] = d2
 
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
@@ -290,7 +294,10 @@ class Model:
             df[f'bond{i}{i + 1}_sin2']     = 1 - df[f'bond{i}{i + 1}_cos2']
 
         for i in range(4):
-            df[f'sergii_dist_{i}'] = pd.Series(sergii_dist[:, i], index=df.index)
+            df[f'sergii_dist_{i}'] = pd.Series(sergii_dist[i, :], index=df.index)
+            for j in range(n_non_sergii_atoms):
+                df[f'sergii_dist2_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :], index=df.index)
+
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -300,7 +307,7 @@ class Model:
 
         return df
 
-    def compute_sergii_dist(self, m, i0, i1):        
+    def compute_sergii_dist(self, m, i0, i1, n_non_sergii_atoms):        
         # Sergii's 4 point method
         p0, p1 = m.positions[i0], m.positions[i1]
         mid = (p0 + p1) * 0.5
@@ -308,6 +315,7 @@ class Model:
         diff = m.positions - mid
         dist = np.linalg.norm(diff, axis=1)
         closest_indices = list(dist.argsort())
+
 
         closest_indices.remove(i0)
         closest_indices.remove(i1)
@@ -318,8 +326,10 @@ class Model:
             i3 = closest_indices[1]
             p3 = m.positions[i3]
             mid = (p0 + p1 + p2 + p3) / 4
+            sergii_pos = [p0, p1, p2, p3]
         else:
             mid = (p0 + p1 + p2) / 3
+            sergii_pos = [p0, p1, p2]
 
         d0 = np.linalg.norm(p0 - mid)
         d1 = np.linalg.norm(p1 - mid)
@@ -327,10 +337,27 @@ class Model:
 
         if len(closest_indices) > 1:
             d3 = np.linalg.norm(p3 - mid)
+            n_sergii_atoms = 4
         else:
             d3 = np.float32(0)
+            n_sergii_atoms = 3
 
-        return sorted([d0, d1, d2, d3])
+        diff = m.positions - mid
+        dist = np.linalg.norm(diff, axis=1)
+        closest_indices = list(dist.argsort())
+
+        positions = m.positions[closest_indices]
+        n_atoms = min(len(positions), n_non_sergii_atoms)
+
+        dist2 = np.zeros((4, n_non_sergii_atoms), dtype='float32')
+        for i in range(n_sergii_atoms):
+            for j in range(n_atoms):
+                dist2[i, j] = np.linalg.norm(sergii_pos[i] - positions[j])
+
+
+        dist = sorted([d0, d1, d2, d3])
+
+        return dist, dist2
         
 
 
@@ -371,11 +398,14 @@ class Model:
                 if column.startswith('atom') and column.endswith(f'_{axis}'):
                     to_drop.append(column)
 
+                if column.startswith('atom') and column.endswith(f'_d{axis}'):
+                    to_drop.append(column)
+
                 if column.startswith('atom') and column.endswith(f'_{axis}_mean'):
                     to_drop.append(column)
 
-                if column.find('_dir_') >= 0:
-                    to_drop.append(column)
+            if column.find('_dir_') >= 0:
+                to_drop.append(column)
 
         df.drop(columns=to_drop, inplace=True)
 
