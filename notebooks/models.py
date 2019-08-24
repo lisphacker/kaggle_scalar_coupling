@@ -196,6 +196,8 @@ class Model:
 
         n_non_sergii_atoms = 8
         sergii_dist2 = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
+        sergii_cos = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
+        sergii_force = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
 
         #bond_info = np.zeros((9, n), dtype='float32')
         bond_info_dist = []
@@ -216,9 +218,11 @@ class Model:
             m = self.molecules[row.molecule_name]
             bonds = m.bonds
 
-            d, d2 = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1, n_non_sergii_atoms)
+            d, d2, cos, force = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1, n_non_sergii_atoms)
             sergii_dist[:, i] = d
             sergii_dist2[:, :, i] = d2
+            sergii_cos[:, :, i] = cos
+            sergii_force[:, :, i] = force
 
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
@@ -293,11 +297,28 @@ class Model:
             df[f'bond{i}{i + 1}_cos2']     = pd.Series(bond_info_cos[i] * bond_info_cos[i], index=df.index)
             df[f'bond{i}{i + 1}_sin2']     = 1 - df[f'bond{i}{i + 1}_cos2']
 
+        sergii_cos2 = sergii_cos * sergii_cos
+        sergii_sin2 = 1 - sergii_cos2
+        sergii_sin2[sergii_sin2 < 0] = 0
+        sergii_sin = np.sqrt(sergii_sin2)
+        sergii_sin_cos = sergii_sin * sergii_cos
+
         for i in range(4):
             df[f'sergii_dist_{i}'] = pd.Series(sergii_dist[i, :], index=df.index)
             for j in range(n_non_sergii_atoms):
                 df[f'sergii_dist2_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :], index=df.index)
+                df[f'sergii_dist2_sq_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_dist2[i, j, :], index=df.index)
+                df[f'sergii_dist2_sq_inv_{i}_{j}'] = 1 / df[f'sergii_dist2_sq_{i}_{j}']
 
+                df[f'sergii_cos_{i}_{j}'] = pd.Series(sergii_cos[i, j, :], index=df.index)
+                # df[f'sergii_sin_{i}_{j}'] = pd.Series(sergii_sin[i, j, :], index=df.index)
+                # df[f'sergii_cos2_{i}_{j}'] = pd.Series(sergii_cos2[i, j, :], index=df.index)
+                # df[f'sergii_sin2_{i}_{j}'] = pd.Series(sergii_sin2[i, j, :], index=df.index)
+                # df[f'sergii_sin_cos_{i}_{j}'] = pd.Series(sergii_sin_cos[i, j, :], index=df.index)
+                df[f'sergii_dist2_cos_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_cos[i, j, :], index=df.index)
+                df[f'sergii_dist2_sin_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_sin[i, j, :], index=df.index)
+
+                df[f'sergii_force_{i}_{j}'] = pd.Series(sergii_force[i, j, :], index=df.index)
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -349,17 +370,29 @@ class Model:
         positions = m.positions[closest_indices]
         n_atoms = min(len(positions), n_non_sergii_atoms)
 
+        charges = [chemistry.atomic_number[m.symbols[i]] for i in closest_indices]
+
         dist2 = np.zeros((4, n_non_sergii_atoms), dtype='float32')
+        cos = np.zeros((4, n_non_sergii_atoms), dtype='float32')
+        force = np.zeros((4, n_non_sergii_atoms), dtype='float32')
+        
         for i in range(n_sergii_atoms):
             for j in range(n_atoms):
                 dist2[i, j] = np.linalg.norm(sergii_pos[i] - positions[j])
 
+                dir1 = sergii_pos[i] - mid
+                dir2 = positions[j] - mid
+
+                dir1 = dir1 / np.linalg.norm(dir1)
+                dir2 = dir2 / np.linalg.norm(dir2)
+
+                cos[i, j] = np.dot(dir1, dir2)
+
+                if dist2[i, j] != 0:
+                    force[i, j] = charges[i] * charges[j] / (dist2[i, j] * dist2[i, j])
 
         dist = sorted([d0, d1, d2, d3])
-
-        return dist, dist2
-        
-
+        return dist, dist2, cos, force
 
 
     def make_complex_inputs(self, df):
@@ -407,7 +440,11 @@ class Model:
             if column.find('_dir_') >= 0:
                 to_drop.append(column)
 
+            # if len(df[column].unique()) == 1 and column != 'type':
+            #     to_drop.append(column)
+
         df.drop(columns=to_drop, inplace=True)
+
 
     def make_output(self, output_df):
         return output_df.loc[:, ['scalar_coupling_constant']]
