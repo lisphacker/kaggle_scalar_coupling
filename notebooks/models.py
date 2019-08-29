@@ -13,6 +13,7 @@ import tensorflow as tf
 from tensorflow.keras import Model as KerasModel, Input
 from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, BatchNormalization, Concatenate
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 
 from util import score
 import chemistry
@@ -195,9 +196,12 @@ class Model:
         sergii_dist = np.zeros((4, n), dtype='float32')
 
         n_non_sergii_atoms = 8
+
         sergii_dist2 = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
         sergii_cos = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
         sergii_force = np.zeros((4, n_non_sergii_atoms, n), dtype='float32')
+
+        sergii_dist_mean = np.zeros((4 + n_non_sergii_atoms, n), dtype='float32')
 
         #bond_info = np.zeros((9, n), dtype='float32')
         bond_info_dist = []
@@ -218,11 +222,12 @@ class Model:
             m = self.molecules[row.molecule_name]
             bonds = m.bonds
 
-            d, d2, cos, force = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1, n_non_sergii_atoms)
+            d, d2, cos, force, dist_mean = self.compute_sergii_dist(m, row.atom_index_0, row.atom_index_1, n_non_sergii_atoms)
             sergii_dist[:, i] = d
             sergii_dist2[:, :, i] = d2
             sergii_cos[:, :, i] = cos
             sergii_force[:, :, i] = force
+            sergii_dist_mean[:, i] = dist_mean
 
             path = m.compute_path(row.atom_index_0, row.atom_index_1)
             syms = [m.symbols[idx] for idx in path]
@@ -309,16 +314,21 @@ class Model:
                 df[f'sergii_dist2_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :], index=df.index)
                 df[f'sergii_dist2_sq_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_dist2[i, j, :], index=df.index)
                 df[f'sergii_dist2_sq_inv_{i}_{j}'] = 1 / df[f'sergii_dist2_sq_{i}_{j}']
+                inf = np.isinf(df[f'sergii_dist2_sq_inv_{i}_{j}'].values)
+                df[f'sergii_dist2_sq_inv_{i}_{j}'].iloc[inf] = 0
 
                 df[f'sergii_cos_{i}_{j}'] = pd.Series(sergii_cos[i, j, :], index=df.index)
-                # df[f'sergii_sin_{i}_{j}'] = pd.Series(sergii_sin[i, j, :], index=df.index)
-                # df[f'sergii_cos2_{i}_{j}'] = pd.Series(sergii_cos2[i, j, :], index=df.index)
-                # df[f'sergii_sin2_{i}_{j}'] = pd.Series(sergii_sin2[i, j, :], index=df.index)
-                # df[f'sergii_sin_cos_{i}_{j}'] = pd.Series(sergii_sin_cos[i, j, :], index=df.index)
+                df[f'sergii_sin_{i}_{j}'] = pd.Series(sergii_sin[i, j, :], index=df.index)
+                df[f'sergii_cos2_{i}_{j}'] = pd.Series(sergii_cos2[i, j, :], index=df.index)
+                df[f'sergii_sin2_{i}_{j}'] = pd.Series(sergii_sin2[i, j, :], index=df.index)
+                df[f'sergii_sin_cos_{i}_{j}'] = pd.Series(sergii_sin_cos[i, j, :], index=df.index)
                 df[f'sergii_dist2_cos_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_cos[i, j, :], index=df.index)
                 df[f'sergii_dist2_sin_{i}_{j}'] = pd.Series(sergii_dist2[i, j, :] * sergii_sin[i, j, :], index=df.index)
 
                 df[f'sergii_force_{i}_{j}'] = pd.Series(sergii_force[i, j, :], index=df.index)
+
+        for i in range(4 + n_non_sergii_atoms):
+            df[f'sergii_dist_mean_{i}'] = pd.Series(sergii_dist_mean[i, :], index=df.index)
 
         # cols = ['molecule_name']
         # for c in self.structures.columns:
@@ -375,7 +385,8 @@ class Model:
         dist2 = np.zeros((4, n_non_sergii_atoms), dtype='float32')
         cos = np.zeros((4, n_non_sergii_atoms), dtype='float32')
         force = np.zeros((4, n_non_sergii_atoms), dtype='float32')
-        
+
+                
         for i in range(n_sergii_atoms):
             for j in range(n_atoms):
                 dist2[i, j] = np.linalg.norm(sergii_pos[i] - positions[j])
@@ -391,8 +402,18 @@ class Model:
                 if dist2[i, j] != 0:
                     force[i, j] = charges[i] * charges[j] / (dist2[i, j] * dist2[i, j])
 
+
+        mol_mid = m.positions.mean(axis=0)
+
+        dist_mean = np.zeros((4 + n_non_sergii_atoms), dtype='float32')
+        for i in range(n_sergii_atoms):
+            dist_mean[i] = np.linalg.norm(sergii_pos[i] - mol_mid)
+
+        for i in range(n_atoms):
+            dist_mean[i + 4] = np.linalg.norm(positions[i] - mol_mid)
+
         dist = sorted([d0, d1, d2, d3])
-        return dist, dist2, cos, force
+        return dist, dist2, cos, force, dist_mean
 
 
     def make_complex_inputs(self, df):
@@ -601,11 +622,16 @@ class NNModel(Model):
         input_df, numeric_input_df, output_df = self.setup_data(input_df, output_df)
         self.setup_additional_output_data(input_df)
 
+        self.last_input_df = input_df
+        self.last_numeric_input_df = numeric_input_df
+        self.last_output_df = output_df
+
         print('  Creating model')
         self.model = self.create_model(numeric_input_df.values.shape[1])
 
         print('  Fitting model')
         self.fit_scalers(numeric_input_df, output_df)
+
 
         i = self.input_scaler.transform(numeric_input_df.values)
         o = self.output_scaler.transform(output_df.values)
@@ -618,10 +644,9 @@ class NNModel(Model):
         o_scalar_coupling_contributions = self.scalar_coupling_contributions_scaler.transform(self.scalar_coupling_contributions_output_df.values)
 
 
-        #es = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=8,verbose=1, mode='auto', restore_best_weights=True)
+        es = tf.keras.callbacks.EarlyStopping(monitor='loss', min_delta=0.0001, patience=20,verbose=1, mode='auto', restore_best_weights=True)
         #rlr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1,patience=7, min_lr=1e-6, mode='auto', verbose=1)
-        #callbacks=[es, rlr]
-        callbacks=[]
+        callbacks=[es]
 
         history = self.model.fit(
             i, 
@@ -648,6 +673,7 @@ class NNModel(Model):
         i = self.input_scaler.transform(numeric_input_df.values)
         ref_output = output_df.values
         o = self.model.predict(i)
+        #test_output = self.output_scaler.inverse_transform(o[0])
         test_output = self.output_scaler.inverse_transform(o)
 
         print('  Evaluating model')
@@ -661,13 +687,14 @@ class NNModel(Model):
         print('  Predicting')
         i = self.input_scaler.transform(numeric_input_df.values)
         o = self.model.predict(i)
+        #return self.output_scaler.inverse_transform(o[0])
         return self.output_scaler.inverse_transform(o)
 
-    def create_model_x(self, num_inputs):
+    def create_model_multi(self, num_inputs):
         i = Input(shape=(num_inputs,))
 
         l = i
-        for j, n in enumerate([1024] * 5):
+        for j, n in enumerate([4096] * 5):
             l = self.create_complex_layer(l, n, name=f'common_{j}')
 
         l_dipole_moments = l
@@ -675,13 +702,13 @@ class NNModel(Model):
         l_mulliken_charges = l
         l_potential_energy = l
        
-        for j, n in enumerate([1024] * 5):
+        for j, n in enumerate([2048] * 5):
             l_dipole_moments = self.create_complex_layer(l_dipole_moments, n, name=f'dipole_moments_{j}')
             l_magnetic_shielding_tensors = self.create_complex_layer(l_magnetic_shielding_tensors, n, name=f'magnetic_shielding_tensors_{j}')
             l_mulliken_charges = self.create_complex_layer(l_mulliken_charges, n, name=f'mulliken_charges_{j}')
             l_potential_energy = self.create_complex_layer(l_potential_energy, n, name=f'potential_energy_{j}')
 
-        for j, n in enumerate([1024] * 5):
+        for j, n in enumerate([2048] * 5):
             l = self.create_complex_layer(l, n, name=f'scc_1_{j}')
 
         l_scalar_coupling_contributions = l
@@ -710,7 +737,7 @@ class NNModel(Model):
         # 0.56 for 1JHC
         i = l = Input(shape=(num_inputs,))
 
-        for j, n in enumerate([1024] * 11):
+        for j, n in enumerate([2048] * 11):
             l = self.create_complex_layer(l, n, name=f'1024x11_{j}')
             n >>= 1
 
